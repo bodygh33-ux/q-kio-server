@@ -5,7 +5,7 @@ const { Server } = require('socket.io');
 const app = express();
 const server = http.createServer(app);
 
-// كلمة السر للوحة التحكم (تقدر تغيرها براحتك)
+// كلمة السر للوحة التحكم
 const ADMIN_PASSWORD = 'admin'; 
 
 // الخزنة الرئيسية اللي هتشيل كل بيانات الرومات المفتوحة في الرامات
@@ -18,35 +18,24 @@ const io = new Server(server, {
     }
 });
 
-// --- دالة مساعدة لتجديد عداد الـ 30 دقيقة للروم ---
 function resetRoomTimer(roomId) {
     if (roomsData[roomId]) {
-        // لو في عداد قديم شغال، وقفه
         if (roomsData[roomId].timer) clearTimeout(roomsData[roomId].timer);
         
-        // شغل عداد جديد بـ 30 دقيقة (30 * 60 * 1000 مللي ثانية)
         roomsData[roomId].timer = setTimeout(() => {
             console.log(`[تنظيف أوتوماتيكي] حذف الغرفة ${roomId} بسبب الخمول.`);
-            // إبلاغ اللاعبين إن الروم اتقفلت
             io.to(roomId).emit('roomClosed', 'تم إغلاق الغرفة بسبب عدم التفاعل لفترة طويلة');
-            // طرد كل اللاعبين من الغرفة
             io.in(roomId).socketsLeave(roomId);
-            // حذف البيانات من الرامات
             delete roomsData[roomId];
         }, 30 * 60 * 1000); 
     }
 }
 
-// --- واجهات الموقع (الروابط) ---
-
-// الصفحة الرئيسية للتأكيد إن السيرفر شغال
 app.get('/', (req, res) => {
     res.send('Welcome to Q-Kio Server! السيرفر شغال وجاهز لاستقبال اللاعبين 🎮');
 });
 
-// لوحة التحكم السريعة للرومات (الداشبورد)
 app.get('/dashboard', (req, res) => {
-    // حماية الداشبورد بكلمة سر في الرابط
     if (req.query.pass !== ADMIN_PASSWORD) {
         return res.status(401).send('<h2 style="color:red; text-align:center;">عفواً، غير مصرح لك بالدخول</h2>');
     }
@@ -81,7 +70,6 @@ app.get('/dashboard', (req, res) => {
     } else {
         activeRooms.forEach(roomId => {
             const room = roomsData[roomId];
-            // معرفة عدد المتصلين الفعليين بالروم حالياً
             const playerCount = io.sockets.adapter.rooms.get(roomId)?.size || 0;
             const createTime = new Date(room.createdAt).toLocaleTimeString('ar-EG');
             
@@ -102,7 +90,6 @@ app.get('/dashboard', (req, res) => {
     res.send(html);
 });
 
-// رابط الحذف اليدوي للرومات (بيكلمه زرار الحذف في الداشبورد)
 app.get('/delete-room', (req, res) => {
     if (req.query.pass !== ADMIN_PASSWORD) return res.status(401).send('غير مصرح لك');
     const roomId = req.query.id;
@@ -117,17 +104,14 @@ app.get('/delete-room', (req, res) => {
 });
 
 
-// --- منطق الألعاب والاتصال ---
 io.on('connection', (socket) => {
     
-    // حدث إنشاء غرفة جديدة (بيبعته الهوست)
     socket.on('createRoom', (roomId) => {
         socket.join(roomId);
-        // لو الروم مش موجودة، اعملها هيكل جديد في الرامات
         if (!roomsData[roomId]) {
             roomsData[roomId] = {
                 createdAt: Date.now(),
-                gameState: {}, // هنا الهوست هيحفظ النقاط والأرقام المسحوبة
+                gameState: {},
                 timer: null
             };
         }
@@ -135,31 +119,42 @@ io.on('connection', (socket) => {
         console.log(`تم إنشاء روم جديدة: ${roomId}`);
     });
 
-    // حدث انضمام لاعب للغرفة
     socket.on('joinRoom', (roomId) => {
         socket.join(roomId);
-        
-        // لو الروم موجودة، ابعت للاعب ده "حالة اللعبة الحالية" عشان يشوف نفس اللي الناس شايفاه
         if (roomsData[roomId]) {
             socket.emit('syncState', roomsData[roomId].gameState);
-            resetRoomTimer(roomId); // أي حد يدخل بيجدد العداد
+            resetRoomTimer(roomId); 
         }
         console.log(`اللاعب ${socket.id} دخل الغرفة ${roomId}`);
     });
 
-    // الموزع الشامل للأحداث + حفظ حالة اللعبة
     socket.on('gameEvent', (data) => {
         if (data && data.room) {
             
-            // تجديد وقت الروم عشان اللعب شغال
+            // --- الإضافة الجديدة للحذف الفوري من الداشبورد ---
+            if (data.event === 'roomClosed') {
+                // نبعت رسالة الإغلاق للاعبين
+                socket.to(data.room).emit('roomClosed', data.payload);
+                
+                // نمسح الروم من الرامات فوراً
+                if (roomsData[data.room]) {
+                    clearTimeout(roomsData[data.room].timer);
+                    delete roomsData[data.room];
+                }
+                
+                // نفصل اللاعبين من الغرفة برمجياً
+                io.in(data.room).socketsLeave(data.room);
+                console.log(`تم مسح الغرفة ${data.room} لأن الهوست أنهاها.`);
+                return; // نوقف الكود هنا
+            }
+            // ------------------------------------------------
+
             resetRoomTimer(data.room); 
 
-            // لو الهوست باعت حدث اسمه 'saveState'، السيرفر هيحفظ الداتا دي في الرامات عنده
             if (data.event === 'saveState' && roomsData[data.room]) {
                 roomsData[data.room].gameState = data.payload;
             }
 
-            // إرسال الحركة لباقي اللاعبين في نفس الروم
             socket.to(data.room).emit(data.event, data.payload);
         }
     });
