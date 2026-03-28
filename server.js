@@ -5,6 +5,12 @@ const { Server } = require('socket.io');
 const app = express();
 const server = http.createServer(app);
 
+// --- الإضافة الجديدة لحل مشكلة Cannot GET / ---
+app.get('/', (req, res) => {
+    res.send('Welcome to Q-Kio Server! السيرفر شغال وجاهز لاستقبال اللاعبين 🎮');
+});
+// ----------------------------------------------
+
 const io = new Server(server, {
     cors: {
         origin: "*", 
