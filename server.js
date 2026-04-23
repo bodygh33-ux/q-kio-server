@@ -225,6 +225,7 @@ io.on('connection', (socket) => {
                 tiktokConn: tiktokLiveConnection,
                 timer: null
             };
+            resetRoomTimer(socket.id); // بدء عداد الحذف التلقائي (30 دقيقة)
             broadcastDashboardUpdate();
 
             socket.emit('tiktok_connected', { profilePic, nickname });
@@ -271,11 +272,27 @@ io.on('connection', (socket) => {
             prefixBoys: data.prefixBoys.trim(),
             prefixGirls: data.prefixGirls.trim()
         };
+        resetRoomTimer(socket.id); // تجديد العداد مع كل جولة جديدة
         console.log(`💣 بدء جولة قنبلة. الإجابة [${socket.bombData.answer}]`);
     });
 
     socket.on('stop_bomb_round', () => {
         socket.bombActive = false;
+        resetRoomTimer(socket.id);
+    });
+
+    // استلام طلب الإغلاق اليدوي من زر "الإغلاق" في صفحة اللعبة
+    socket.on('tiktok_disconnect', () => {
+        if (socket.tiktokConn) {
+            socket.tiktokConn.disconnect();
+            socket.tiktokConn = null;
+        }
+        if (roomsData[socket.id]) {
+            clearTimeout(roomsData[socket.id].timer);
+            delete roomsData[socket.id];
+            broadcastDashboardUpdate();
+            console.log(`تم مسح وإغلاق روم التيك توك يدوياً`);
+        }
     });
 
 
