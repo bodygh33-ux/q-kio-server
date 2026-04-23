@@ -233,26 +233,32 @@ io.on('connection', (socket) => {
             // الاستماع للتعليقات
             tiktokLiveConnection.on('chat', data => {
                 if(socket.bombActive && socket.bombData) {
-                    const text = data.comment.trim();
+                    const userId = data.userId;
+                    
+                    // منع اللاعب من الإجابة أكثر من مرة في نفس الجولة لضمان العدل
+                    if (socket.bombData.answeredUsers.has(userId)) return;
+
+                    const text = data.comment.trim().toLowerCase();
                     const boysTarget = socket.bombData.prefixBoys + socket.bombData.answer;
                     const girlsTarget = socket.bombData.prefixGirls + socket.bombData.answer;
 
-                    if (text === boysTarget) {
-                        socket.bombActive = false; // إيقاف لتجنب التكرار
-                        socket.emit('tiktok_winner', { 
-                            winner: 'boys', 
-                            answer: socket.bombData.answer, 
-                            winnerName: data.nickname || data.uniqueId, 
-                            winnerPic: data.profilePictureUrl 
-                        });
-                    } else if (text === girlsTarget) {
-                        socket.bombActive = false;
-                        socket.emit('tiktok_winner', { 
-                            winner: 'girls', 
-                            answer: socket.bombData.answer, 
-                            winnerName: data.nickname || data.uniqueId, 
-                            winnerPic: data.profilePictureUrl 
-                        });
+                    const isBoy = text.includes(boysTarget);
+                    const isGirl = text.includes(girlsTarget);
+
+                    if (isBoy && isGirl) return; // تجاهل إذا كتب الاثنين معاً
+
+                    if (isBoy) {
+                        socket.bombData.answeredUsers.add(userId);
+                        socket.bombData.bombPos += 5; // دفع القنبلة نحو البنات
+                        if(socket.bombData.bombPos > 90) socket.bombData.bombPos = 90;
+                        socket.bombData.lastHeroBoys = { name: data.nickname || data.uniqueId, pic: data.profilePictureUrl };
+                        socket.emit('bomb_moved', { pos: socket.bombData.bombPos });
+                    } else if (isGirl) {
+                        socket.bombData.answeredUsers.add(userId);
+                        socket.bombData.bombPos -= 5; // دفع القنبلة نحو الشباب
+                        if(socket.bombData.bombPos < 10) socket.bombData.bombPos = 10;
+                        socket.bombData.lastHeroGirls = { name: data.nickname || data.uniqueId, pic: data.profilePictureUrl };
+                        socket.emit('bomb_moved', { pos: socket.bombData.bombPos });
                     }
                 }
             });
@@ -268,12 +274,48 @@ io.on('connection', (socket) => {
     socket.on('start_bomb_round', (data) => {
         socket.bombActive = true;
         socket.bombData = {
-            answer: data.answer.trim(),
-            prefixBoys: data.prefixBoys.trim(),
-            prefixGirls: data.prefixGirls.trim()
+            answer: data.answer.trim().toLowerCase(),
+            prefixBoys: data.prefixBoys.trim().toLowerCase(),
+            prefixGirls: data.prefixGirls.trim().toLowerCase(),
+            answeredUsers: new Set(),
+            bombPos: 50, // تبدأ القنبلة في المنتصف
+            lastHeroBoys: null,
+            lastHeroGirls: null
         };
         resetRoomTimer(socket.id); // تجديد العداد مع كل جولة جديدة
-        console.log(`💣 بدء جولة قنبلة. الإجابة [${socket.bombData.answer}]`);
+        console.log(`💣 بدء جولة قنبلة (الشد والجذب). الإجابة [${socket.bombData.answer}]`);
+    });
+
+    socket.on('bomb_time_up', () => {
+        if (!socket.bombActive || !socket.bombData) return;
+        socket.bombActive = false; // إنهاء الجولة
+        
+        const pos = socket.bombData.bombPos;
+        if (pos > 50) {
+            // القنبلة تدحرجت نحو البنات -> انفجرت في البنات -> الشباب فازوا
+            socket.emit('tiktok_winner', { 
+                winner: 'boys', 
+                answer: socket.bombData.answer,
+                winnerName: socket.bombData.lastHeroBoys ? socket.bombData.lastHeroBoys.name : 'فريق الشباب',
+                winnerPic: socket.bombData.lastHeroBoys ? socket.bombData.lastHeroBoys.pic : 'https://ui-avatars.com/api/?name=Boys'
+            });
+        } else if (pos < 50) {
+            // القنبلة تدحرجت نحو الشباب -> انفجرت في الشباب -> البنات فازوا
+            socket.emit('tiktok_winner', { 
+                winner: 'girls', 
+                answer: socket.bombData.answer,
+                winnerName: socket.bombData.lastHeroGirls ? socket.bombData.lastHeroGirls.name : 'فريق البنات',
+                winnerPic: socket.bombData.lastHeroGirls ? socket.bombData.lastHeroGirls.pic : 'https://ui-avatars.com/api/?name=Girls'
+            });
+        } else {
+            // تعادل (50%)
+            socket.emit('tiktok_winner', { 
+                winner: 'tie', 
+                answer: socket.bombData.answer,
+                winnerName: 'الجميع تعادل!',
+                winnerPic: 'https://ui-avatars.com/api/?name=Tie'
+            });
+        }
     });
 
     socket.on('stop_bomb_round', () => {
