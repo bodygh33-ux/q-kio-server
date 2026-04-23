@@ -1,6 +1,7 @@
 const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
+const { WebcastPushConnection } = require('tiktok-live-connector'); // إضافة مكتبة تيك توك
 
 const app = express();
 const server = http.createServer(app);
@@ -19,14 +20,15 @@ const io = new Server(server, {
 function broadcastDashboardUpdate() {
     const activeRooms = {};
     for (const id in roomsData) {
-        // استخراج نوع اللعبة من حالة الروم (سواء كان اسمها gameType أو type)
         const state = roomsData[id].gameState || {};
         const gType = state.gameType || state.type || "غير معروف";
 
         activeRooms[id] = {
             playerCount: io.sockets.adapter.rooms.get(id)?.size || 0,
             createdAt: roomsData[id].createdAt,
-            gameType: gType // إرسال نوع اللعبة للداشبورد
+            gameType: gType,
+            isTikTok: roomsData[id].isTikTok || false,
+            tiktokUser: roomsData[id].tiktokUser || null
         };
     }
     io.to('admin_room').emit('roomsUpdate', activeRooms);
@@ -40,6 +42,12 @@ function resetRoomTimer(roomId) {
             console.log(`[تنظيف أوتوماتيكي] حذف الغرفة ${roomId} بسبب الخمول.`);
             io.to(roomId).emit('roomClosed', 'تم إغلاق الغرفة بسبب عدم التفاعل لفترة طويلة');
             io.in(roomId).socketsLeave(roomId);
+            
+            // إغلاق اتصال التيك توك لو كان موجود
+            if (roomsData[roomId].tiktokConn) {
+                roomsData[roomId].tiktokConn.disconnect();
+            }
+
             delete roomsData[roomId];
             broadcastDashboardUpdate(); 
         }, 30 * 60 * 1000); 
@@ -71,6 +79,7 @@ app.get('/dashboard', (req, res) => {
                 .btn-delete:hover { background: #c0392b; }
                 .live-badge { background: #2ecc71; color: white; padding: 3px 8px; border-radius: 12px; font-size: 12px; animation: pulse 2s infinite; }
                 .game-badge { background: rgba(0, 198, 255, 0.1); color: #0072ff; padding: 6px 12px; border-radius: 20px; font-weight: bold; border: 1px solid rgba(0, 198, 255, 0.3); display: inline-block; }
+                .tiktok-badge { background: rgba(255, 0, 80, 0.1); color: #EE1D52; border-color: rgba(255, 0, 80, 0.3); }
                 @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.5; } 100% { opacity: 1; } }
             </style>
         </head>
@@ -79,7 +88,7 @@ app.get('/dashboard', (req, res) => {
             <table>
                 <thead>
                     <tr>
-                        <th>رقم الروم (الكود)</th>
+                        <th>رقم الروم (الكود / يوزر التيك توك)</th>
                         <th>اللعبة</th>
                         <th>عدد الأجهزة المتصلة</th>
                         <th>تاريخ الإنشاء</th>
@@ -94,7 +103,6 @@ app.get('/dashboard', (req, res) => {
             <script>
                 const socket = io();
                 
-                // قاموس بأسماء الألعاب
                 const gameNamesMap = {
                     'bathara': 'بعثرة 🧩',
                     'bingo': 'بينجو 🔢',
@@ -102,6 +110,7 @@ app.get('/dashboard', (req, res) => {
                     'tarkiba': 'تركيبة 🔠',
                     'decode': 'فك الشفرة 🕵️',
                     'coordinates': 'إحداثيات 🎯',
+                    'tiktok_bomb': 'تيك توك: القنبلة 💣',
                     'غير معروف': 'في الانتظار ⏳'
                 };
                 
@@ -118,15 +127,23 @@ app.get('/dashboard', (req, res) => {
 
                     let html = '';
                     roomIds.forEach(id => {
-                        const time = new Date(rooms[id].createdAt).toLocaleTimeString('ar-EG');
-                        const count = rooms[id].playerCount;
-                        const gType = rooms[id].gameType;
+                        const room = rooms[id];
+                        const time = new Date(room.createdAt).toLocaleTimeString('ar-EG');
+                        const count = room.playerCount;
+                        const gType = room.gameType;
                         const gameDisplayName = gameNamesMap[gType] || gType;
+                        
+                        let displayId = id;
+                        let badgeClass = 'game-badge';
+                        if(room.isTikTok) {
+                            displayId = '@' + room.tiktokUser;
+                            badgeClass += ' tiktok-badge';
+                        }
 
                         html += \`
                             <tr>
-                                <td><strong style="font-size:1.1rem;">\${id}</strong></td>
-                                <td><span class="game-badge">\${gameDisplayName}</span></td>
+                                <td><strong style="font-size:1.1rem;">\${displayId}</strong></td>
+                                <td><span class="\${badgeClass}">\${gameDisplayName}</span></td>
                                 <td><strong>\${count}</strong> جهاز</td>
                                 <td>\${time}</td>
                                 <td>
@@ -155,7 +172,9 @@ app.get('/delete-room', (req, res) => {
     
     if (roomsData[roomId]) {
         clearTimeout(roomsData[roomId].timer);
-        // طرد الهوست واللاعبين فوراً
+        if (roomsData[roomId].tiktokConn) {
+            roomsData[roomId].tiktokConn.disconnect();
+        }
         io.to(roomId).emit('roomClosed', 'تم إغلاق الغرفة من قبل الإدارة');
         io.in(roomId).socketsLeave(roomId);
         delete roomsData[roomId];
@@ -174,6 +193,93 @@ io.on('connection', (socket) => {
         }
     });
 
+    // --- منطق ألعاب تيك توك اللحظية ---
+    socket.on('tiktok_connect', (data) => {
+        const username = data.username;
+        if (!username) return;
+
+        if (socket.tiktokConn) {
+            socket.tiktokConn.disconnect();
+        }
+
+        console.log(`محاولة الاتصال ببث تيك توك: @${username}`);
+
+        let tiktokLiveConnection = new WebcastPushConnection(username, {
+            processInitialData: false,
+            enableExtendedGiftInfo: false,
+            enableWebsocketUpgrade: true
+        });
+
+        tiktokLiveConnection.connect().then(state => {
+            console.log(`✅ تم الاتصال بنجاح ببث: @${username} (RoomID: ${state.roomId})`);
+            
+            const profilePic = state.roomInfo?.owner?.avatar_large?.urlList?.[0] || 'https://ui-avatars.com/api/?name='+username;
+            const nickname = state.roomInfo?.owner?.nickname || username;
+
+            // تسجيل الروم
+            roomsData[socket.id] = { 
+                createdAt: Date.now(),
+                gameState: { gameType: 'tiktok_bomb' },
+                isTikTok: true,
+                tiktokUser: username,
+                tiktokConn: tiktokLiveConnection,
+                timer: null
+            };
+            broadcastDashboardUpdate();
+
+            socket.emit('tiktok_connected', { profilePic, nickname });
+
+            // الاستماع للتعليقات
+            tiktokLiveConnection.on('chat', data => {
+                if(socket.bombActive && socket.bombData) {
+                    const text = data.comment.trim();
+                    const boysTarget = socket.bombData.prefixBoys + socket.bombData.answer;
+                    const girlsTarget = socket.bombData.prefixGirls + socket.bombData.answer;
+
+                    if (text === boysTarget) {
+                        socket.bombActive = false; // إيقاف لتجنب التكرار
+                        socket.emit('tiktok_winner', { 
+                            winner: 'boys', 
+                            answer: socket.bombData.answer, 
+                            winnerName: data.nickname || data.uniqueId, 
+                            winnerPic: data.profilePictureUrl 
+                        });
+                    } else if (text === girlsTarget) {
+                        socket.bombActive = false;
+                        socket.emit('tiktok_winner', { 
+                            winner: 'girls', 
+                            answer: socket.bombData.answer, 
+                            winnerName: data.nickname || data.uniqueId, 
+                            winnerPic: data.profilePictureUrl 
+                        });
+                    }
+                }
+            });
+
+        }).catch(err => {
+            console.error(`❌ فشل الاتصال ببث @${username}:`, err.message);
+            socket.emit('tiktok_error', { message: 'هذا الحساب ليس في بث مباشر حالياً، أو اليوزر خطأ.' });
+        });
+
+        socket.tiktokConn = tiktokLiveConnection;
+    });
+
+    socket.on('start_bomb_round', (data) => {
+        socket.bombActive = true;
+        socket.bombData = {
+            answer: data.answer.trim(),
+            prefixBoys: data.prefixBoys.trim(),
+            prefixGirls: data.prefixGirls.trim()
+        };
+        console.log(`💣 بدء جولة قنبلة. الإجابة [${socket.bombData.answer}]`);
+    });
+
+    socket.on('stop_bomb_round', () => {
+        socket.bombActive = false;
+    });
+
+
+    // --- منطق الألعاب العادية ---
     socket.on('createRoom', (roomId) => {
         socket.join(roomId);
         if (!roomsData[roomId]) {
@@ -185,7 +291,6 @@ io.on('connection', (socket) => {
         }
         resetRoomTimer(roomId);
         broadcastDashboardUpdate(); 
-        console.log(`تم إنشاء روم جديدة: ${roomId}`);
     });
 
     socket.on('joinRoom', (roomId) => {
@@ -195,10 +300,15 @@ io.on('connection', (socket) => {
             resetRoomTimer(roomId); 
         }
         broadcastDashboardUpdate(); 
-        console.log(`اللاعب ${socket.id} دخل الغرفة ${roomId}`);
     });
 
     socket.on('disconnect', () => {
+        if (socket.tiktokConn) {
+            socket.tiktokConn.disconnect();
+        }
+        if (roomsData[socket.id]) {
+            delete roomsData[socket.id];
+        }
         setTimeout(broadcastDashboardUpdate, 1000); 
     });
 
@@ -214,19 +324,12 @@ io.on('connection', (socket) => {
                 broadcastDashboardUpdate(); 
                 return; 
             }
-
             resetRoomTimer(data.room); 
-
             if (data.event === 'saveState' && roomsData[data.room]) {
                 roomsData[data.room].gameState = data.payload;
             }
-
             socket.to(data.room).emit(data.event, data.payload);
-            
-            // تحديث الداشبورد في حالة تغيير اللعبة
-            if (data.event === 'saveState') {
-                broadcastDashboardUpdate();
-            }
+            if (data.event === 'saveState') broadcastDashboardUpdate();
         }
     });
 
