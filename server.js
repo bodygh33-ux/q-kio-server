@@ -246,8 +246,7 @@ io.on('connection', (socket) => {
             tiktokLiveConnection.on('chat', data => {
                 const room = roomsData[socket.id];
                 if (!room || !room.chatFilter) return; // تجاهل كل الشات إذا لم يكن هناك فلتر نشط
-
-                if (room.chatFilter.type === 'exact_match') {
+                if (room.chatFilter.type === 'exact') {
                     const comment = data.comment.trim().toLowerCase();
                     const targets = room.chatFilter.targets || [];
 
