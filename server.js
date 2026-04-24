@@ -7,7 +7,7 @@ const app = express();
 const server = http.createServer(app);
 
 // كلمة السر للوحة التحكم
-const ADMIN_PASSWORD = 'admin'; 
+const ADMIN_PASSWORD = 'admin';
 
 // الخزنة الرئيسية اللي هتشيل كل بيانات الرومات المفتوحة في الرامات
 const roomsData = {};
@@ -37,20 +37,20 @@ function broadcastDashboardUpdate() {
 function resetRoomTimer(roomId) {
     if (roomsData[roomId]) {
         if (roomsData[roomId].timer) clearTimeout(roomsData[roomId].timer);
-        
+
         roomsData[roomId].timer = setTimeout(() => {
             console.log(`[تنظيف أوتوماتيكي] حذف الغرفة ${roomId} بسبب الخمول.`);
             io.to(roomId).emit('roomClosed', 'تم إغلاق الغرفة بسبب عدم التفاعل لفترة طويلة');
             io.in(roomId).socketsLeave(roomId);
-            
+
             // إغلاق اتصال التيك توك لو كان موجود
             if (roomsData[roomId].tiktokConn) {
                 roomsData[roomId].tiktokConn.disconnect();
             }
 
             delete roomsData[roomId];
-            broadcastDashboardUpdate(); 
-        }, 30 * 60 * 1000); 
+            broadcastDashboardUpdate();
+        }, 30 * 60 * 1000);
     }
 }
 
@@ -169,7 +169,7 @@ app.get('/dashboard', (req, res) => {
 app.get('/delete-room', (req, res) => {
     if (req.query.pass !== ADMIN_PASSWORD) return res.status(401).send('غير مصرح لك');
     const roomId = req.query.id;
-    
+
     if (roomsData[roomId]) {
         clearTimeout(roomsData[roomId].timer);
         if (roomsData[roomId].tiktokConn) {
@@ -178,16 +178,16 @@ app.get('/delete-room', (req, res) => {
         io.to(roomId).emit('roomClosed', 'تم إغلاق الغرفة من قبل الإدارة');
         io.in(roomId).socketsLeave(roomId);
         delete roomsData[roomId];
-        broadcastDashboardUpdate(); 
+        broadcastDashboardUpdate();
     }
     res.send('تم الحذف بنجاح');
 });
 
 
 io.on('connection', (socket) => {
-    
+
     socket.on('adminLogin', (pass) => {
-        if(pass === ADMIN_PASSWORD) {
+        if (pass === ADMIN_PASSWORD) {
             socket.join('admin_room');
             broadcastDashboardUpdate();
         }
@@ -212,12 +212,12 @@ io.on('connection', (socket) => {
 
         tiktokLiveConnection.connect().then(state => {
             console.log(`✅ تم الاتصال بنجاح ببث: @${username} (RoomID: ${state.roomId})`);
-            
-            const profilePic = state.roomInfo?.owner?.avatar_large?.urlList?.[0] || 'https://ui-avatars.com/api/?name='+username;
+
+            const profilePic = state.roomInfo?.owner?.avatar_large?.urlList?.[0] || 'https://ui-avatars.com/api/?name=' + username;
             const nickname = state.roomInfo?.owner?.nickname || username;
 
             // تسجيل الروم
-            roomsData[socket.id] = { 
+            roomsData[socket.id] = {
                 createdAt: Date.now(),
                 gameState: { gameType: 'tiktok_bomb' },
                 isTikTok: true,
@@ -234,7 +234,7 @@ io.on('connection', (socket) => {
             socket.on('set_tiktok_filter', (filterOptions) => {
                 // filterOptions: { type: 'exact_match', targets: ['answer1', 'answer2'] }
                 // أو { type: 'all' } للألعاب التي تحتاج كل الشات
-                if(roomsData[socket.id]) {
+                if (roomsData[socket.id]) {
                     roomsData[socket.id].chatFilter = filterOptions;
                 }
             });
@@ -247,11 +247,19 @@ io.on('connection', (socket) => {
                 if (room.chatFilter.type === 'exact_match') {
                     const comment = data.comment.trim().toLowerCase();
                     const targets = room.chatFilter.targets || [];
-                    
+
                     if (targets.includes(comment)) {
                         socket.emit('tiktok_chat', data);
                         // بمجرد إيجاد فائز، يتم مسح الفلتر فوراً لتجاهل باقي الإجابات
-                        room.chatFilter = null; 
+                        room.chatFilter = null;
+                    }
+                } else if (room.chatFilter.type === 'contains_any') {
+                    // فلتر القنبلة: يرسل أي تعليق يحتوي على أي كلمة مستهدفة (بدون مسح الفلتر)
+                    const comment = data.comment.trim().toLowerCase();
+                    const targets = room.chatFilter.targets || [];
+                    const matched = targets.find(t => comment.includes(t));
+                    if (matched) {
+                        socket.emit('tiktok_chat', { ...data, matchedTarget: matched });
                     }
                 } else if (room.chatFilter.type === 'all') {
                     socket.emit('tiktok_chat', data);
@@ -300,16 +308,16 @@ io.on('connection', (socket) => {
             };
         }
         resetRoomTimer(roomId);
-        broadcastDashboardUpdate(); 
+        broadcastDashboardUpdate();
     });
 
     socket.on('joinRoom', (roomId) => {
         socket.join(roomId);
         if (roomsData[roomId]) {
             socket.emit('syncState', roomsData[roomId].gameState);
-            resetRoomTimer(roomId); 
+            resetRoomTimer(roomId);
         }
-        broadcastDashboardUpdate(); 
+        broadcastDashboardUpdate();
     });
 
     socket.on('disconnect', () => {
@@ -319,7 +327,7 @@ io.on('connection', (socket) => {
         if (roomsData[socket.id]) {
             delete roomsData[socket.id];
         }
-        setTimeout(broadcastDashboardUpdate, 1000); 
+        setTimeout(broadcastDashboardUpdate, 1000);
     });
 
     socket.on('gameEvent', (data) => {
@@ -331,10 +339,10 @@ io.on('connection', (socket) => {
                     delete roomsData[data.room];
                 }
                 io.in(data.room).socketsLeave(data.room);
-                broadcastDashboardUpdate(); 
-                return; 
+                broadcastDashboardUpdate();
+                return;
             }
-            resetRoomTimer(data.room); 
+            resetRoomTimer(data.room);
             if (data.event === 'saveState' && roomsData[data.room]) {
                 roomsData[data.room].gameState = data.payload;
             }
