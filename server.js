@@ -223,62 +223,22 @@ io.on('connection', (socket) => {
                 isTikTok: true,
                 tiktokUser: username,
                 tiktokConn: tiktokLiveConnection,
-                timer: null,
-                userScores: {}
+                timer: null
             };
             resetRoomTimer(socket.id); // بدء عداد الحذف التلقائي (30 دقيقة)
             broadcastDashboardUpdate();
 
             socket.emit('tiktok_connected', { profilePic, nickname });
 
-            // الاستماع للتعليقات
+            // تمرير أحداث تيك توك للعميل ليعالجها بنفسه (Dumb Server)
             tiktokLiveConnection.on('chat', data => {
-                if(socket.bombActive && socket.bombData) {
-                    const userId = data.userId;
-                    
-                    // منع اللاعب من الإجابة أكثر من مرة في نفس الجولة لضمان العدل
-                    if (socket.bombData.answeredUsers.has(userId)) return;
-
-                    const text = data.comment.trim().toLowerCase();
-                    const boysTarget = socket.bombData.prefixBoys + socket.bombData.answer;
-                    const girlsTarget = socket.bombData.prefixGirls + socket.bombData.answer;
-
-                    const isBoy = text.includes(boysTarget);
-                    const isGirl = text.includes(girlsTarget);
-
-                    if (isBoy && isGirl) return; // تجاهل إذا كتب الاثنين معاً
-
-                    if (isBoy || isGirl) {
-                        socket.bombData.answeredUsers.add(userId);
-                        
-                        const room = roomsData[socket.id];
-                        if (room) {
-                            if (!room.userScores) room.userScores = {};
-                            if (!room.userScores[userId]) {
-                                room.userScores[userId] = {
-                                    id: userId,
-                                    name: data.nickname || data.uniqueId,
-                                    pic: data.profilePictureUrl,
-                                    points: 0,
-                                    team: isBoy ? 'boys' : 'girls'
-                                };
-                            }
-                            room.userScores[userId].name = data.nickname || data.uniqueId;
-                            room.userScores[userId].pic = data.profilePictureUrl;
-                            room.userScores[userId].points += 1;
-                        }
-
-                        if (isBoy) {
-                            socket.bombData.bombPos += 5; // دفع القنبلة نحو البنات
-                            if(socket.bombData.bombPos > 90) socket.bombData.bombPos = 90;
-                            socket.emit('bomb_moved', { pos: socket.bombData.bombPos });
-                        } else if (isGirl) {
-                            socket.bombData.bombPos -= 5; // دفع القنبلة نحو الشباب
-                            if(socket.bombData.bombPos < 10) socket.bombData.bombPos = 10;
-                            socket.emit('bomb_moved', { pos: socket.bombData.bombPos });
-                        }
-                    }
-                }
+                socket.emit('tiktok_chat', data);
+            });
+            tiktokLiveConnection.on('gift', data => {
+                socket.emit('tiktok_gift', data);
+            });
+            tiktokLiveConnection.on('like', data => {
+                socket.emit('tiktok_like', data);
             });
 
         }).catch(err => {
@@ -289,52 +249,7 @@ io.on('connection', (socket) => {
         socket.tiktokConn = tiktokLiveConnection;
     });
 
-    socket.on('start_bomb_round', (data) => {
-        socket.bombActive = true;
-        socket.bombData = {
-            answer: data.answer.trim().toLowerCase(),
-            prefixBoys: data.prefixBoys.trim().toLowerCase(),
-            prefixGirls: data.prefixGirls.trim().toLowerCase(),
-            answeredUsers: new Set(),
-            bombPos: 50 // تبدأ القنبلة في المنتصف
-        };
-        resetRoomTimer(socket.id); // تجديد العداد مع كل جولة جديدة
-        console.log(`💣 بدء جولة قنبلة (الشد والجذب). الإجابة [${socket.bombData.answer}]`);
-    });
 
-    socket.on('bomb_time_up', () => {
-        if (!socket.bombActive || !socket.bombData) return;
-        socket.bombActive = false; // إنهاء الجولة
-        
-        const pos = socket.bombData.bombPos;
-        const room = roomsData[socket.id];
-        
-        let winningTeam = null;
-        if (pos > 50) winningTeam = 'boys';
-        else if (pos < 50) winningTeam = 'girls';
-        else winningTeam = 'tie';
-
-        let topUsers = [];
-        if (room && room.userScores) {
-            let usersArray = Object.values(room.userScores);
-            if (winningTeam !== 'tie') {
-                usersArray = usersArray.filter(u => u.team === winningTeam);
-            }
-            usersArray.sort((a, b) => b.points - a.points);
-            topUsers = usersArray.slice(0, 4);
-        }
-
-        socket.emit('tiktok_winner', { 
-            winner: winningTeam, 
-            answer: socket.bombData.answer,
-            topUsers: topUsers
-        });
-    });
-
-    socket.on('stop_bomb_round', () => {
-        socket.bombActive = false;
-        resetRoomTimer(socket.id);
-    });
 
     // استلام طلب الإغلاق اليدوي من زر "الإغلاق" في صفحة اللعبة
     socket.on('tiktok_disconnect', () => {
