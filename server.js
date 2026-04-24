@@ -274,6 +274,29 @@ io.on('connection', (socket) => {
             tiktokLiveConnection.on('like', data => {
                 socket.emit('tiktok_like', data);
             });
+            
+            // الاستماع لإنهاء البث أو انقطاع الاتصال من خوادم تيك توك
+            tiktokLiveConnection.on('streamEnd', (actionId) => {
+                socket.emit('tiktok_disconnected', 'تم إنهاء البث المباشر.');
+                if (roomsData[socket.id]) {
+                    if (roomsData[socket.id].tiktokConn) {
+                        roomsData[socket.id].tiktokConn.disconnect();
+                    }
+                    delete roomsData[socket.id];
+                    broadcastDashboardUpdate();
+                }
+            });
+
+            tiktokLiveConnection.on('disconnected', () => {
+                socket.emit('tiktok_disconnected', 'انقطع الاتصال ببث التيك توك.');
+                if (roomsData[socket.id]) {
+                    if (roomsData[socket.id].tiktokConn) {
+                        roomsData[socket.id].tiktokConn.disconnect();
+                    }
+                    delete roomsData[socket.id];
+                    broadcastDashboardUpdate();
+                }
+            });
 
         }).catch(err => {
             console.error(`❌ فشل الاتصال ببث @${username}:`, err.message);
