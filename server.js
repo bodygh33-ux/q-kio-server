@@ -230,9 +230,32 @@ io.on('connection', (socket) => {
 
             socket.emit('tiktok_connected', { profilePic, nickname });
 
-            // تمرير أحداث تيك توك للعميل ليعالجها بنفسه (Dumb Server)
+            // إعداد فلتر مخصص من العميل لحماية السيرفر (Dynamic Filter)
+            socket.on('set_tiktok_filter', (filterOptions) => {
+                // filterOptions: { type: 'exact_match', targets: ['answer1', 'answer2'] }
+                // أو { type: 'all' } للألعاب التي تحتاج كل الشات
+                if(roomsData[socket.id]) {
+                    roomsData[socket.id].chatFilter = filterOptions;
+                }
+            });
+
+            // تمرير أحداث تيك توك للعميل (مع حماية الفلترة)
             tiktokLiveConnection.on('chat', data => {
-                socket.emit('tiktok_chat', data);
+                const room = roomsData[socket.id];
+                if (!room || !room.chatFilter) return; // تجاهل كل الشات إذا لم يكن هناك فلتر نشط
+
+                if (room.chatFilter.type === 'exact_match') {
+                    const comment = data.comment.trim().toLowerCase();
+                    const targets = room.chatFilter.targets || [];
+                    
+                    if (targets.includes(comment)) {
+                        socket.emit('tiktok_chat', data);
+                        // بمجرد إيجاد فائز، يتم مسح الفلتر فوراً لتجاهل باقي الإجابات
+                        room.chatFilter = null; 
+                    }
+                } else if (room.chatFilter.type === 'all') {
+                    socket.emit('tiktok_chat', data);
+                }
             });
             tiktokLiveConnection.on('gift', data => {
                 socket.emit('tiktok_gift', data);
