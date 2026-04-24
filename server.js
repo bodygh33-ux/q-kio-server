@@ -213,7 +213,10 @@ io.on('connection', (socket) => {
         tiktokLiveConnection.connect().then(state => {
             console.log(`✅ تم الاتصال بنجاح ببث: @${username} (RoomID: ${state.roomId})`);
 
-            const profilePic = state.roomInfo?.owner?.avatar_large?.urlList?.[0] || 'https://ui-avatars.com/api/?name=' + username;
+            const profilePic = state.roomInfo?.owner?.avatar_large?.url_list?.[0] || 
+                               state.roomInfo?.owner?.avatar_medium?.url_list?.[0] || 
+                               state.roomInfo?.owner?.avatar_thumb?.url_list?.[0] || 
+                               'https://ui-avatars.com/api/?name=' + username;
             const nickname = state.roomInfo?.owner?.nickname || username;
 
             // تسجيل الروم
