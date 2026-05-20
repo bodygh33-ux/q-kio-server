@@ -21,10 +21,20 @@ const CODES_ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || '123';
 let serviceAccount = null;
 
 if (process.env.FIREBASE_PROJECT_ID && process.env.FIREBASE_CLIENT_EMAIL && process.env.FIREBASE_PRIVATE_KEY) {
+    let privateKey = process.env.FIREBASE_PRIVATE_KEY.trim();
+    // إزالة علامات الاقتباس المزدوجة أو الفردية الزائدة إن وجدت بالخطأ في البيئة
+    if (privateKey.startsWith('"') && privateKey.endsWith('"')) {
+        privateKey = privateKey.substring(1, privateKey.length - 1);
+    }
+    if (privateKey.startsWith("'") && privateKey.endsWith("'")) {
+        privateKey = privateKey.substring(1, privateKey.length - 1);
+    }
+    privateKey = privateKey.replace(/\\n/g, '\n');
+
     serviceAccount = {
         projectId: process.env.FIREBASE_PROJECT_ID,
         clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-        privateKey: process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n')
+        privateKey: privateKey
     };
 } else {
     try {
