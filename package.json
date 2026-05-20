@@ -2,10 +2,10 @@
   "name": "q-kio-server",
   "version": "1.0.0",
   "description": "Q-Kio Integrated TikTok and Games Server",
-  "main": "server_tiktok_integrated.js",
+  "main": "server.js",
   "scripts": {
-    "start": "node server_tiktok_integrated.js",
-    "dev": "nodemon server_tiktok_integrated.js"
+    "start": "node server.js",
+    "dev": "nodemon server.js"
   },
   "dependencies": {
     "cors": "^2.8.5",
