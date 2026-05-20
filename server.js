@@ -1,13 +1,342 @@
 const express = require('express');
 const http = require('http');
+const cors = require('cors');
+const admin = require('firebase-admin');
 const { Server } = require('socket.io');
 const { WebcastPushConnection } = require('tiktok-live-connector'); // إضافة مكتبة تيك توك
 
 const app = express();
+app.use(cors());
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
 const server = http.createServer(app);
 
-// كلمة السر للوحة التحكم
+// كلمة السر للوحة التحكم لألعاب التيك توك (القديمة)
 const ADMIN_PASSWORD = 'admin';
+// كلمة السر لإدارة الأكواد ولوحة التحكم الخاصة بالأكواد (qghazy66admin)
+const CODES_ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || '123';
+
+// تهيئة Firebase Admin SDK
+let serviceAccount = null;
+
+if (process.env.FIREBASE_PROJECT_ID && process.env.FIREBASE_CLIENT_EMAIL && process.env.FIREBASE_PRIVATE_KEY) {
+    serviceAccount = {
+        projectId: process.env.FIREBASE_PROJECT_ID,
+        clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
+        privateKey: process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n')
+    };
+} else {
+    try {
+        serviceAccount = require('./serviceAccountKey.json');
+    } catch (e) {
+        console.warn("⚠️ Warning: serviceAccountKey.json not found and environment variables not set. Firebase Admin SDK will not work.");
+    }
+}
+
+if (serviceAccount) {
+    try {
+        admin.initializeApp({
+            credential: admin.credential.cert(serviceAccount)
+        });
+        console.log("🔥 Firebase Admin SDK initialized successfully.");
+    } catch (error) {
+        console.error("❌ Firebase Admin SDK initialization error:", error.message);
+    }
+} else {
+    console.error("❌ Firebase Admin SDK cannot be initialized (no credentials found).");
+}
+
+const db = serviceAccount ? admin.firestore() : null;
+
+// --- APIs للتحكم بالأكواد وإدارة الجلسات ---
+
+// 1. جلب الأكواد للمدير
+app.get('/api/admin/codes', (req, res, next) => {
+    const pass = req.headers['x-admin-password'] || req.query.pass;
+    if (pass !== CODES_ADMIN_PASSWORD) return res.status(401).json({ success: false, message: 'رمز التحقق خاطئ' });
+    next();
+}, async (req, res) => {
+    const { collection } = req.query;
+    if (!['codes', 'encyclopedia_codes', 'tiktok_codes'].includes(collection)) {
+        return res.status(400).json({ success: false, message: 'اسم المجموعة غير صحيح' });
+    }
+    if (!db) return res.status(500).json({ success: false, message: 'قاعدة البيانات غير مهيأة' });
+
+    try {
+        const snapshot = await db.collection(collection).orderBy('createdAt', 'desc').get();
+        const codes = [];
+        snapshot.forEach(doc => {
+            codes.push({ id: doc.id, ...doc.data() });
+        });
+        res.json({ success: true, codes });
+    } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+    }
+});
+
+// 2. إنشاء كود جديد
+app.post('/api/admin/create-code', (req, res, next) => {
+    const pass = req.headers['x-admin-password'] || req.body.pass;
+    if (pass !== CODES_ADMIN_PASSWORD) return res.status(401).json({ success: false, message: 'رمز التحقق خاطئ' });
+    next();
+}, async (req, res) => {
+    const { collection, docId, data } = req.body;
+    if (!['codes', 'encyclopedia_codes', 'tiktok_codes'].includes(collection)) {
+        return res.status(400).json({ success: false, message: 'اسم المجموعة غير صحيح' });
+    }
+    if (!db) return res.status(500).json({ success: false, message: 'قاعدة البيانات غير مهيأة' });
+
+    try {
+        if (docId) {
+            const docRef = db.collection(collection).doc(docId);
+            const docSnap = await docRef.get();
+            if (docSnap.exists) {
+                return res.status(400).json({ success: false, message: 'هذا الكود مستخدم بالفعل!' });
+            }
+            await docRef.set(data);
+            res.json({ success: true, id: docId });
+        } else {
+            const docRef = await db.collection(collection).add(data);
+            res.json({ success: true, id: docRef.id });
+        }
+    } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+    }
+});
+
+// 3. تحديث كود
+app.post('/api/admin/update-code', (req, res, next) => {
+    const pass = req.headers['x-admin-password'] || req.body.pass;
+    if (pass !== CODES_ADMIN_PASSWORD) return res.status(401).json({ success: false, message: 'رمز التحقق خاطئ' });
+    next();
+}, async (req, res) => {
+    const { collection, id, data } = req.body;
+    if (!['codes', 'encyclopedia_codes', 'tiktok_codes'].includes(collection)) {
+        return res.status(400).json({ success: false, message: 'اسم المجموعة غير صحيح' });
+    }
+    if (!db) return res.status(500).json({ success: false, message: 'قاعدة البيانات غير مهيأة' });
+
+    try {
+        await db.collection(collection).doc(id).update(data);
+        res.json({ success: true });
+    } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+    }
+});
+
+// 4. تغيير نص الكود (تخصيص الكود)
+app.post('/api/admin/change-code-string', (req, res, next) => {
+    const pass = req.headers['x-admin-password'] || req.body.pass;
+    if (pass !== CODES_ADMIN_PASSWORD) return res.status(401).json({ success: false, message: 'رمز التحقق خاطئ' });
+    next();
+}, async (req, res) => {
+    const { collection, id, newCode } = req.body;
+    if (!['codes', 'encyclopedia_codes', 'tiktok_codes'].includes(collection)) {
+        return res.status(400).json({ success: false, message: 'اسم المجموعة غير صحيح' });
+    }
+    if (!db) return res.status(500).json({ success: false, message: 'قاعدة البيانات غير مهيأة' });
+
+    try {
+        if (collection === 'codes') {
+            const q = await db.collection('codes').where('code', '==', newCode).get();
+            if (!q.empty) {
+                return res.status(400).json({ success: false, message: 'هذا الكود مستخدم بالفعل! اختر كوداً آخر.' });
+            }
+            await db.collection('codes').doc(id).update({ code: newCode });
+            res.json({ success: true });
+        } else {
+            const newDocRef = db.collection(collection).doc(newCode);
+            const newDocSnap = await newDocRef.get();
+            if (newDocSnap.exists) {
+                return res.status(400).json({ success: false, message: 'هذا الكود مستخدم بالفعل! اختر كوداً آخر.' });
+            }
+
+            const oldDocRef = db.collection(collection).doc(id);
+            const oldDocSnap = await oldDocRef.get();
+            if (oldDocSnap.exists) {
+                const data = oldDocSnap.data();
+                data.code = newCode;
+                await newDocRef.set(data);
+                await oldDocRef.delete();
+                res.json({ success: true });
+            } else {
+                res.status(404).json({ success: false, message: 'الكود القديم غير موجود' });
+            }
+        }
+    } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+    }
+});
+
+// 5. حذف كود
+app.post('/api/admin/delete-code', (req, res, next) => {
+    const pass = req.headers['x-admin-password'] || req.body.pass;
+    if (pass !== CODES_ADMIN_PASSWORD) return res.status(401).json({ success: false, message: 'رمز التحقق خاطئ' });
+    next();
+}, async (req, res) => {
+    const { collection, id } = req.body;
+    if (!['codes', 'encyclopedia_codes', 'tiktok_codes'].includes(collection)) {
+        return res.status(400).json({ success: false, message: 'اسم المجموعة غير صحيح' });
+    }
+    if (!db) return res.status(500).json({ success: false, message: 'قاعدة البيانات غير مهيأة' });
+
+    try {
+        await db.collection(collection).doc(id).delete();
+        res.json({ success: true });
+    } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+    }
+});
+
+// 6. واجهة تحقق المستخدمين من كود الألعاب المميزة
+app.post('/api/user/validate-game-code', async (req, res) => {
+    const { code, deviceId } = req.body;
+    if (!code || !deviceId) {
+        return res.status(400).json({ success: false, message: 'بيانات ناقصة' });
+    }
+    if (!db) return res.status(500).json({ success: false, message: 'قاعدة البيانات غير مهيأة' });
+
+    try {
+        const q = await db.collection('codes').where('code', '==', code).get();
+        if (q.empty) {
+            return res.status(404).json({ success: false, message: 'الكود الذي أدخلته غير موجود!' });
+        }
+
+        let docRef = null;
+        let data = null;
+        q.forEach(doc => {
+            docRef = doc.ref;
+            data = doc.data();
+        });
+
+        const now = new Date();
+        const expiry = new Date(data.end);
+        if (now > expiry) {
+            return res.status(400).json({ success: false, message: 'عذراً، انتهت صلاحية هذا الكود.', isExpired: true });
+        }
+
+        const usedDevices = data.usedDevices || [];
+        const maxDevices = Number(data.maxDevices) || 1;
+        const isRegistered = usedDevices.includes(deviceId);
+
+        if (isRegistered) {
+            await docRef.update({ lastLogin: new Date().toISOString() });
+            return res.json({ success: true, client: data.client, games: data.games });
+        } else {
+            if (usedDevices.length >= maxDevices) {
+                return res.status(400).json({ success: false, message: `تم استخدام الحد الأقصى من الأجهزة (${usedDevices.length} من ${maxDevices}).` });
+            } else {
+                usedDevices.push(deviceId);
+                await docRef.update({
+                    usedDevices: usedDevices,
+                    lastLogin: new Date().toISOString()
+                });
+                return res.json({ success: true, client: data.client, games: data.games });
+            }
+        }
+    } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+    }
+});
+
+// 7. واجهة تحقق المستخدمين من كود الموسوعة
+app.post('/api/user/validate-encyclopedia-code', async (req, res) => {
+    const { code, deviceId } = req.body;
+    if (!code || !deviceId) {
+        return res.status(400).json({ success: false, message: 'بيانات ناقصة' });
+    }
+    if (!db) return res.status(500).json({ success: false, message: 'قاعدة البيانات غير مهيأة' });
+
+    try {
+        const docRef = db.collection('encyclopedia_codes').doc(code);
+        const docSnap = await docRef.get();
+        if (!docSnap.exists) {
+            return res.status(404).json({ success: false, message: 'تأكد من الكود.' });
+        }
+
+        const data = docSnap.data();
+        const now = new Date();
+        const expiry = new Date(data.expiryDate);
+        if (now > expiry) {
+            return res.status(400).json({ success: false, message: 'انتهت صلاحية الكود.', isExpired: true });
+        }
+
+        const usedDevices = data.usedDevices || [];
+        if (data.device && !usedDevices.includes(data.device)) {
+            usedDevices.push(data.device);
+        }
+        const maxDevices = Number(data.maxDevices) || 1;
+        const isRegistered = usedDevices.includes(deviceId);
+
+        if (isRegistered) {
+            await docRef.update({ lastLogin: new Date().toISOString() });
+            return res.json({ success: true, client: data.client, expiryDate: data.expiryDate, maxDevices: data.maxDevices });
+        } else {
+            if (usedDevices.length >= maxDevices) {
+                return res.status(400).json({ success: false, message: `هذا الكود مستخدم بالفعل على ${usedDevices.length} من ${maxDevices} أجهزة مسموحة.` });
+            } else {
+                usedDevices.push(deviceId);
+                await docRef.update({
+                    usedDevices: usedDevices,
+                    lastLogin: new Date().toISOString()
+                });
+                return res.json({ success: true, client: data.client, expiryDate: data.expiryDate, maxDevices: data.maxDevices });
+            }
+        }
+    } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+    }
+});
+
+// 8. واجهة تحقق المستخدمين من كود ألعاب تيك توك
+app.post('/api/user/validate-tiktok-code', async (req, res) => {
+    const { code, deviceId } = req.body;
+    if (!code || !deviceId) {
+        return res.status(400).json({ success: false, message: 'بيانات ناقصة' });
+    }
+    if (!db) return res.status(500).json({ success: false, message: 'قاعدة البيانات غير مهيأة' });
+
+    try {
+        const docRef = db.collection('tiktok_codes').doc(code);
+        const docSnap = await docRef.get();
+        if (!docSnap.exists) {
+            return res.status(404).json({ success: false, message: 'تأكد من الكود.' });
+        }
+
+        const data = docSnap.data();
+        const now = new Date();
+        const expiry = new Date(data.expiryDate);
+        if (now > expiry) {
+            return res.status(400).json({ success: false, message: 'انتهت صلاحية الكود.', isExpired: true });
+        }
+
+        const usedDevices = data.usedDevices || [];
+        if (data.device && !usedDevices.includes(data.device)) {
+            usedDevices.push(data.device);
+        }
+        const maxDevices = Number(data.maxDevices) || 1;
+        const isRegistered = usedDevices.includes(deviceId);
+
+        if (isRegistered) {
+            await docRef.update({ lastLogin: new Date().toISOString() });
+            return res.json({ success: true, client: data.client, expiryDate: data.expiryDate, maxDevices: data.maxDevices });
+        } else {
+            if (usedDevices.length >= maxDevices) {
+                return res.status(400).json({ success: false, message: `هذا الكود مستخدم بالفعل على ${usedDevices.length} من ${maxDevices} أجهزة مسموحة.` });
+            } else {
+                usedDevices.push(deviceId);
+                await docRef.update({
+                    usedDevices: usedDevices,
+                    lastLogin: new Date().toISOString()
+                });
+                return res.json({ success: true, client: data.client, expiryDate: data.expiryDate, maxDevices: data.maxDevices });
+            }
+        }
+    } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+    }
+});
 
 // الخزنة الرئيسية اللي هتشيل كل بيانات الرومات المفتوحة في الرامات
 const roomsData = {};
@@ -213,10 +542,10 @@ io.on('connection', (socket) => {
         tiktokLiveConnection.connect().then(state => {
             console.log(`✅ تم الاتصال بنجاح ببث: @${username} (RoomID: ${state.roomId})`);
 
-            const profilePic = state.roomInfo?.owner?.avatar_large?.url_list?.[0] || 
-                               state.roomInfo?.owner?.avatar_medium?.url_list?.[0] || 
-                               state.roomInfo?.owner?.avatar_thumb?.url_list?.[0] || 
-                               'https://ui-avatars.com/api/?name=' + username;
+            const profilePic = state.roomInfo?.owner?.avatar_large?.url_list?.[0] ||
+                state.roomInfo?.owner?.avatar_medium?.url_list?.[0] ||
+                state.roomInfo?.owner?.avatar_thumb?.url_list?.[0] ||
+                'https://ui-avatars.com/api/?name=' + username;
             const nickname = state.roomInfo?.owner?.nickname || username;
 
             // تسجيل الروم
@@ -273,7 +602,7 @@ io.on('connection', (socket) => {
             tiktokLiveConnection.on('like', data => {
                 socket.emit('tiktok_like', data);
             });
-            
+
             // الاستماع لإنهاء البث أو انقطاع الاتصال من خوادم تيك توك
             tiktokLiveConnection.on('streamEnd', (actionId) => {
                 socket.emit('tiktok_disconnected', 'تم إنهاء البث المباشر.');
