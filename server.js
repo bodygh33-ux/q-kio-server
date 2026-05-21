@@ -59,6 +59,51 @@ if (serviceAccount) {
 
 const db = serviceAccount ? admin.firestore() : null;
 
+// ===== [SECURITY] التوقيع الرقمي وإدارة الجلسات الآمنة =====
+const crypto = require('crypto');
+const SIGNING_SECRET = process.env.SIGNING_SECRET || 'kio_super_secret_signing_key_2026';
+
+function generateSecureToken(payload) {
+    const dataString = JSON.stringify(payload);
+    const signature = crypto.createHmac('sha256', SIGNING_SECRET).update(dataString).digest('hex');
+    return `${Buffer.from(dataString).toString('base64')}.${signature}`;
+}
+
+function verifySecureToken(token) {
+    try {
+        if (!token) return null;
+        const parts = token.split('.');
+        if (parts.length !== 2) return null;
+        
+        const payloadStr = Buffer.from(parts[0], 'base64').toString('utf8');
+        const signature = parts[1];
+        const expectedSignature = crypto.createHmac('sha256', SIGNING_SECRET).update(payloadStr).digest('hex');
+        
+        if (signature !== expectedSignature) return null;
+        return JSON.parse(payloadStr);
+    } catch (e) {
+        return null;
+    }
+}
+
+function verifySocketAuth(socket, requiredType) {
+    try {
+        const auth = socket.handshake.auth;
+        const token = auth && auth.token;
+        if (!token) return false;
+        
+        const payload = verifySecureToken(token);
+        if (!payload) return false;
+        
+        if (payload.type !== requiredType) return false;
+        if (Date.now() > payload.expiry) return false;
+        
+        return true;
+    } catch (e) {
+        return false;
+    }
+}
+
 // --- APIs للتحكم بالأكواد وإدارة الجلسات ---
 
 // 1. جلب الأكواد للمدير
@@ -230,9 +275,18 @@ app.post('/api/user/validate-game-code', async (req, res) => {
         const maxDevices = Number(data.maxDevices) || 1;
         const isRegistered = usedDevices.includes(deviceId);
 
+        // توليد توكن الجلسة الآمن
+        const token = generateSecureToken({
+            type: 'vip',
+            client: data.client,
+            games: data.games,
+            deviceId: deviceId,
+            expiry: Math.min(Date.now() + 12 * 60 * 60 * 1000, new Date(data.end).getTime())
+        });
+
         if (isRegistered) {
             await docRef.update({ lastLogin: new Date().toISOString() });
-            return res.json({ success: true, client: data.client, games: data.games });
+            return res.json({ success: true, client: data.client, games: data.games, token: token });
         } else {
             if (usedDevices.length >= maxDevices) {
                 return res.status(400).json({ success: false, message: `تم استخدام الحد الأقصى من الأجهزة (${usedDevices.length} من ${maxDevices}).` });
@@ -242,7 +296,7 @@ app.post('/api/user/validate-game-code', async (req, res) => {
                     usedDevices: usedDevices,
                     lastLogin: new Date().toISOString()
                 });
-                return res.json({ success: true, client: data.client, games: data.games });
+                return res.json({ success: true, client: data.client, games: data.games, token: token });
             }
         }
     } catch (error) {
@@ -279,9 +333,17 @@ app.post('/api/user/validate-encyclopedia-code', async (req, res) => {
         const maxDevices = Number(data.maxDevices) || 1;
         const isRegistered = usedDevices.includes(deviceId);
 
+        // توليد توكن الجلسة الآمن
+        const token = generateSecureToken({
+            type: 'encyclopedia',
+            client: data.client,
+            deviceId: deviceId,
+            expiry: new Date(data.expiryDate).getTime()
+        });
+
         if (isRegistered) {
             await docRef.update({ lastLogin: new Date().toISOString() });
-            return res.json({ success: true, client: data.client, expiryDate: data.expiryDate, maxDevices: data.maxDevices });
+            return res.json({ success: true, client: data.client, expiryDate: data.expiryDate, maxDevices: data.maxDevices, token: token });
         } else {
             if (usedDevices.length >= maxDevices) {
                 return res.status(400).json({ success: false, message: `هذا الكود مستخدم بالفعل على ${usedDevices.length} من ${maxDevices} أجهزة مسموحة.` });
@@ -291,7 +353,7 @@ app.post('/api/user/validate-encyclopedia-code', async (req, res) => {
                     usedDevices: usedDevices,
                     lastLogin: new Date().toISOString()
                 });
-                return res.json({ success: true, client: data.client, expiryDate: data.expiryDate, maxDevices: data.maxDevices });
+                return res.json({ success: true, client: data.client, expiryDate: data.expiryDate, maxDevices: data.maxDevices, token: token });
             }
         }
     } catch (error) {
@@ -328,9 +390,17 @@ app.post('/api/user/validate-tiktok-code', async (req, res) => {
         const maxDevices = Number(data.maxDevices) || 1;
         const isRegistered = usedDevices.includes(deviceId);
 
+        // توليد توكن الجلسة الآمن
+        const token = generateSecureToken({
+            type: 'tiktok',
+            client: data.client,
+            deviceId: deviceId,
+            expiry: new Date(data.expiryDate).getTime()
+        });
+
         if (isRegistered) {
             await docRef.update({ lastLogin: new Date().toISOString() });
-            return res.json({ success: true, client: data.client, expiryDate: data.expiryDate, maxDevices: data.maxDevices });
+            return res.json({ success: true, client: data.client, expiryDate: data.expiryDate, maxDevices: data.maxDevices, token: token });
         } else {
             if (usedDevices.length >= maxDevices) {
                 return res.status(400).json({ success: false, message: `هذا الكود مستخدم بالفعل على ${usedDevices.length} من ${maxDevices} أجهزة مسموحة.` });
@@ -340,12 +410,33 @@ app.post('/api/user/validate-tiktok-code', async (req, res) => {
                     usedDevices: usedDevices,
                     lastLogin: new Date().toISOString()
                 });
-                return res.json({ success: true, client: data.client, expiryDate: data.expiryDate, maxDevices: data.maxDevices });
+                return res.json({ success: true, client: data.client, expiryDate: data.expiryDate, maxDevices: data.maxDevices, token: token });
             }
         }
     } catch (error) {
         res.status(500).json({ success: false, message: error.message });
     }
+});
+
+// 9. واجهة التحقق الآمن من التوكن والجلسة
+app.post('/api/user/verify-session', (req, res) => {
+    const { token, deviceId, type } = req.body;
+    if (!token) return res.status(400).json({ success: false, message: 'توكن مفقود' });
+
+    const payload = verifySecureToken(token);
+    if (!payload) return res.status(401).json({ success: false, message: 'توكن غير صالح أو منتهي الصلاحية' });
+
+    if (type && payload.type !== type) {
+        return res.status(403).json({ success: false, message: 'نوع جلسة غير متطابق' });
+    }
+    if (deviceId && payload.deviceId !== deviceId) {
+        return res.status(403).json({ success: false, message: 'جلسة مسجلة لجهاز آخر' });
+    }
+    if (Date.now() > payload.expiry) {
+        return res.status(401).json({ success: false, message: 'انتهت صلاحية الجلسة' });
+    }
+
+    res.json({ success: true, client: payload.client });
 });
 
 // الخزنة الرئيسية اللي هتشيل كل بيانات الرومات المفتوحة في الرامات
@@ -534,6 +625,14 @@ io.on('connection', (socket) => {
 
     // --- منطق ألعاب تيك توك اللحظية ---
     socket.on('tiktok_connect', (data) => {
+        // التحقق الأمني من توكن التيك توك قبل الاتصال بالبث
+        if (!verifySocketAuth(socket, 'tiktok')) {
+            console.log(`[Security Action] Rejecting tiktok_connect for unauthorized socket ${socket.id}`);
+            socket.emit('tiktok_error', { message: 'غير مصرح لك بالاتصال. يرجى تفعيل كود تيك توك صالح.' });
+            socket.disconnect();
+            return;
+        }
+
         const username = data.username;
         if (!username) return;
 
@@ -663,6 +762,14 @@ io.on('connection', (socket) => {
 
     // --- منطق الألعاب العادية ---
     socket.on('createRoom', (roomId) => {
+        // التحقق الأمني من توكن VIP قبل إنشاء غرفة ألعاب
+        if (!verifySocketAuth(socket, 'vip')) {
+            console.log(`[Security Action] Rejecting createRoom for unauthorized socket ${socket.id}`);
+            socket.emit('error', 'غير مصرح لك بإنشاء غرفة ألعاب. يرجى تسجيل الدخول بكود صالح.');
+            socket.disconnect();
+            return;
+        }
+
         socket.join(roomId);
         if (!roomsData[roomId]) {
             roomsData[roomId] = {
