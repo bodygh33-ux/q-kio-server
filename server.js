@@ -451,7 +451,7 @@ app.post('/api/user/verify-session', (req, res) => {
     }
 
     console.log(`[Verify Session] Approved - client: ${payload.client}`);
-    res.json({ success: true, client: payload.client });
+    res.json({ success: true, client: payload.client, games: payload.games });
 });
 
 // الخزنة الرئيسية اللي هتشيل كل بيانات الرومات المفتوحة في الرامات
@@ -777,20 +777,13 @@ io.on('connection', (socket) => {
 
     // --- منطق الألعاب العادية ---
     socket.on('createRoom', (roomId) => {
-        // التحقق الأمني من توكن VIP قبل إنشاء غرفة ألعاب
-        if (!verifySocketAuth(socket, 'vip')) {
-            console.log(`[Security Action] Rejecting createRoom for unauthorized socket ${socket.id}`);
-            socket.emit('error', 'غير مصرح لك بإنشاء غرفة ألعاب. يرجى تسجيل الدخول بكود صالح.');
-            socket.disconnect();
-            return;
-        }
-
         socket.join(roomId);
         if (!roomsData[roomId]) {
             roomsData[roomId] = {
                 createdAt: Date.now(),
                 gameState: {},
-                timer: null
+                timer: null,
+                hostSocketId: socket.id // تسجيل معرف سوكت الهوست للتحقق اللاحق
             };
         }
         resetRoomTimer(roomId);
@@ -818,6 +811,37 @@ io.on('connection', (socket) => {
 
     socket.on('gameEvent', (data) => {
         if (data && data.room) {
+            const room = roomsData[data.room];
+            if (room) {
+                // التحقق الأمني للهوست فقط في الغرف المميزة (VIP)
+                if (socket.id === room.hostSocketId) {
+                    if (data.event === 'saveState') {
+                        const state = data.payload || {};
+                        const gType = state.gameType || state.type;
+                        
+                        const vipGames = [
+                            'bathara', 'bingo', 'risk_game', 'tarkiba', 'decode_cipher', 'coordinates',
+                            'money-stake', 'quiz_game', 'safe_crack', 'hidden-link', 'sniper', 'rain',
+                            'shadhaya', 'memory_vip', 'ihdathiyat', 'color-war', 'race', 'million_decision',
+                            'family_feud', 'liar_deck'
+                        ];
+                        
+                        if (gType && vipGames.includes(gType)) {
+                            room.isVIP = true;
+                        }
+                    }
+
+                    if (room.isVIP) {
+                        if (!verifySocketAuth(socket, 'vip')) {
+                            console.log(`[Security Action] Rejecting game event for unauthorized host socket ${socket.id} in VIP room ${data.room}`);
+                            socket.emit('error', 'غير مصرح لك بإدارة هذه اللعبة المميزة. يرجى تفعيل كود صالح.');
+                            socket.disconnect();
+                            return;
+                        }
+                    }
+                }
+            }
+
             if (data.event === 'roomClosed') {
                 socket.to(data.room).emit('roomClosed', data.payload);
                 if (roomsData[data.room]) {
