@@ -86,23 +86,7 @@ function verifySecureToken(token) {
     }
 }
 
-function verifySocketAuth(socket, requiredType) {
-    try {
-        const auth = socket.handshake.auth;
-        const token = auth && auth.token;
-        if (!token) return false;
-        
-        const payload = verifySecureToken(token);
-        if (!payload) return false;
-        
-        if (payload.type !== requiredType) return false;
-        if (Date.now() > payload.expiry) return false;
-        
-        return true;
-    } catch (e) {
-        return false;
-    }
-}
+// Removed verifySocketAuth definition as requested.
 
 // --- APIs للتحكم بالأكواد وإدارة الجلسات ---
 
@@ -640,14 +624,6 @@ io.on('connection', (socket) => {
 
     // --- منطق ألعاب تيك توك اللحظية ---
     socket.on('tiktok_connect', (data) => {
-        // التحقق الأمني من توكن التيك توك قبل الاتصال بالبث
-        if (!verifySocketAuth(socket, 'tiktok')) {
-            console.log(`[Security Action] Rejecting tiktok_connect for unauthorized socket ${socket.id}`);
-            socket.emit('tiktok_error', { message: 'غير مصرح لك بالاتصال. يرجى تفعيل كود تيك توك صالح.' });
-            socket.disconnect();
-            return;
-        }
-
         const username = data.username;
         if (!username) return;
 
@@ -811,37 +787,6 @@ io.on('connection', (socket) => {
 
     socket.on('gameEvent', (data) => {
         if (data && data.room) {
-            const room = roomsData[data.room];
-            if (room) {
-                // التحقق الأمني للهوست فقط في الغرف المميزة (VIP)
-                if (socket.id === room.hostSocketId) {
-                    if (data.event === 'saveState') {
-                        const state = data.payload || {};
-                        const gType = state.gameType || state.type;
-                        
-                        const vipGames = [
-                            'bathara', 'bingo', 'risk_game', 'tarkiba', 'decode_cipher', 'coordinates',
-                            'money-stake', 'quiz_game', 'safe_crack', 'hidden-link', 'sniper', 'rain',
-                            'shadhaya', 'memory_vip', 'ihdathiyat', 'color-war', 'race', 'million_decision',
-                            'family_feud', 'liar_deck'
-                        ];
-                        
-                        if (gType && vipGames.includes(gType)) {
-                            room.isVIP = true;
-                        }
-                    }
-
-                    if (room.isVIP) {
-                        if (!verifySocketAuth(socket, 'vip')) {
-                            console.log(`[Security Action] Rejecting game event for unauthorized host socket ${socket.id} in VIP room ${data.room}`);
-                            socket.emit('error', 'غير مصرح لك بإدارة هذه اللعبة المميزة. يرجى تفعيل كود صالح.');
-                            socket.disconnect();
-                            return;
-                        }
-                    }
-                }
-            }
-
             if (data.event === 'roomClosed') {
                 socket.to(data.room).emit('roomClosed', data.payload);
                 if (roomsData[data.room]) {
