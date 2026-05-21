@@ -421,21 +421,36 @@ app.post('/api/user/validate-tiktok-code', async (req, res) => {
 // 9. واجهة التحقق الآمن من التوكن والجلسة
 app.post('/api/user/verify-session', (req, res) => {
     const { token, deviceId, type } = req.body;
-    if (!token) return res.status(400).json({ success: false, message: 'توكن مفقود' });
+    
+    console.log(`[Verify Session] request received - type: ${type}, deviceId: ${deviceId}`);
+    
+    if (!token) {
+        console.warn(`[Verify Session] Rejected - Missing token`);
+        return res.status(400).json({ success: false, message: 'توكن مفقود' });
+    }
 
     const payload = verifySecureToken(token);
-    if (!payload) return res.status(401).json({ success: false, message: 'توكن غير صالح أو منتهي الصلاحية' });
+    if (!payload) {
+        console.warn(`[Verify Session] Rejected - Invalid token or signature failed`);
+        return res.status(401).json({ success: false, message: 'توكن غير صالح أو منتهي الصلاحية' });
+    }
+
+    console.log(`[Verify Session] Token payload:`, payload);
 
     if (type && payload.type !== type) {
+        console.warn(`[Verify Session] Rejected - Session type mismatch: expected ${type}, got ${payload.type}`);
         return res.status(403).json({ success: false, message: 'نوع جلسة غير متطابق' });
     }
     if (deviceId && payload.deviceId !== deviceId) {
+        console.warn(`[Verify Session] Rejected - Device ID mismatch: payload has ${payload.deviceId}, request has ${deviceId}`);
         return res.status(403).json({ success: false, message: 'جلسة مسجلة لجهاز آخر' });
     }
     if (Date.now() > payload.expiry) {
+        console.warn(`[Verify Session] Rejected - Session expired: current time ${Date.now()}, expiry ${payload.expiry}`);
         return res.status(401).json({ success: false, message: 'انتهت صلاحية الجلسة' });
     }
 
+    console.log(`[Verify Session] Approved - client: ${payload.client}`);
     res.json({ success: true, client: payload.client });
 });
 
