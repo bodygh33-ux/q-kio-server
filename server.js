@@ -229,7 +229,7 @@ app.post('/api/admin/delete-code', (req, res, next) => {
 });
 
 // 6. واجهة تحقق المستخدمين من كود الألعاب المميزة
-app.post('/api/user/validate-game-code', async (req, res) => {
+const validateGameCodeHandler = async (req, res) => {
     const { code, deviceId } = req.body;
     if (!code || !deviceId) {
         return res.status(400).json({ success: false, message: 'بيانات ناقصة' });
@@ -286,7 +286,10 @@ app.post('/api/user/validate-game-code', async (req, res) => {
     } catch (error) {
         res.status(500).json({ success: false, message: error.message });
     }
-});
+};
+
+app.post('/api/user/validate-game-code', validateGameCodeHandler);
+app.post('/api/user/validate-code', validateGameCodeHandler);
 
 // 7. واجهة تحقق المستخدمين من كود الموسوعة
 app.post('/api/user/validate-encyclopedia-code', async (req, res) => {
