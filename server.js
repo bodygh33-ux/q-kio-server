@@ -664,8 +664,27 @@ io.on('connection', (socket) => {
             return;
         }
 
-        const username = data.username;
+        const username = data.username ? data.username.trim().toLowerCase() : null;
         if (!username) return;
+
+        // 1. تنظيف عالمي لأي اتصال نشط سابق لنفس اسم المستخدم لمنع تضارب الجلسات
+        for (const rId in roomsData) {
+            const room = roomsData[rId];
+            if (room && room.isTikTok && room.tiktokUser && room.tiktokUser.trim().toLowerCase() === username) {
+                console.log(`[TikTok Cleanup] Found active connection for @${username} in room ${rId}. Disconnecting...`);
+                if (room.tiktokConn) {
+                    try {
+                        room.tiktokConn.disconnect();
+                    } catch (err) {
+                        console.error(`Error disconnecting old tiktokConn:`, err);
+                    }
+                }
+                io.to(rId).emit('tiktok_disconnected', 'تم تسجيل الدخول بالبث من صفحة أو لعبة أخرى.');
+                if (rId !== socket.id) {
+                    delete roomsData[rId];
+                }
+            }
+        }
 
         if (socket.tiktokConn) {
             socket.tiktokConn.disconnect();
