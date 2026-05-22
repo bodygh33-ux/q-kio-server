@@ -445,6 +445,33 @@ const io = new Server(server, {
     cors: { origin: "*", methods: ["GET", "POST"] }
 });
 
+// Middleware للتحقق من هوية الهوست في اتصال السوكت
+io.use((socket, next) => {
+    const token = socket.handshake.auth?.token;
+    const isHost = socket.handshake.auth?.isHost;
+
+    if (isHost) {
+        if (!token) {
+            console.warn(`[Socket Auth] Rejected - Host socket missing token (Socket ID: ${socket.id})`);
+            return next(new Error('Authentication error: Missing token for Host connection'));
+        }
+        const payload = verifySecureToken(token);
+        if (!payload) {
+            console.warn(`[Socket Auth] Rejected - Host socket invalid token signature (Socket ID: ${socket.id})`);
+            return next(new Error('Authentication error: Invalid token signature'));
+        }
+        if (Date.now() > payload.expiry) {
+            console.warn(`[Socket Auth] Rejected - Host socket token expired (Socket ID: ${socket.id})`);
+            return next(new Error('Authentication error: Token expired'));
+        }
+        // حفظ بيانات الجلسة المصدقة في السوكت
+        socket.decodedToken = payload;
+        console.log(`[Socket Auth] Approved Host connection - Client: ${payload.client}, Type: ${payload.type}`);
+    }
+    next();
+});
+
+
 // --- دالة تحديث الداشبورد ---
 function broadcastDashboardUpdate() {
     const activeRooms = {};
@@ -624,6 +651,13 @@ io.on('connection', (socket) => {
 
     // --- منطق ألعاب تيك توك اللحظية ---
     socket.on('tiktok_connect', (data) => {
+        // التحقق الأمني: يجب أن يكون السوكت مصدقاً كـ Host من نوع tiktok
+        if (!socket.decodedToken || socket.decodedToken.type !== 'tiktok') {
+            console.warn(`[Security Violation] tiktok_connect rejected for socket ${socket.id} - Not authorized`);
+            socket.emit('tiktok_error', { message: 'غير مصرح لك بالاتصال. كود تفعيل غير صالح أو منتهي.' });
+            return;
+        }
+
         const username = data.username;
         if (!username) return;
 
@@ -753,18 +787,48 @@ io.on('connection', (socket) => {
 
     // --- منطق الألعاب العادية ---
     socket.on('createRoom', (roomId) => {
+        // التحقق الأمني: يجب أن يكون الاتصال مصدقاً ومصنفاً كـ Host
+        if (!socket.decodedToken || (socket.decodedToken.type !== 'vip' && socket.decodedToken.type !== 'tiktok')) {
+            console.warn(`[Security Violation] createRoom rejected for socket ${socket.id} - Not authorized`);
+            socket.emit('auth_error', 'غير مصرح لك بإنشاء غرفة. يرجى تسجيل الدخول بكود تفعيل صالح.');
+            return;
+        }
+
+        const hostClient = socket.decodedToken.client;
+        const currentDeviceId = socket.decodedToken.deviceId;
+
+        // منع الجلسات المتزامنة: إغلاق أي غرف نشطة سابقة لنفس هذا الهوست
+        for (const existingRoomId in roomsData) {
+            const existingRoom = roomsData[existingRoomId];
+            if (existingRoom && existingRoom.hostClient === hostClient && existingRoomId !== roomId) {
+                console.log(`[Concurrent Session] Closing old room ${existingRoomId} for host ${hostClient}`);
+                io.to(existingRoomId).emit('roomClosed', 'تم إغلاق الغرفة لفتحها من جهاز أو متصفح آخر.');
+                // إجبار كل السوكتس في الغرفة على مغادرتها
+                io.in(existingRoomId).socketsLeave(existingRoomId);
+                // تنظيف اتصال تيك توك لو كان موجود
+                if (existingRoom.tiktokConn) {
+                    existingRoom.tiktokConn.disconnect();
+                }
+                clearTimeout(existingRoom.timer);
+                delete roomsData[existingRoomId];
+            }
+        }
+
         socket.join(roomId);
         if (!roomsData[roomId]) {
             roomsData[roomId] = {
                 createdAt: Date.now(),
                 gameState: {},
                 timer: null,
-                hostSocketId: socket.id // تسجيل معرف سوكت الهوست للتحقق اللاحق
+                hostSocketId: socket.id, // تسجيل معرف سوكت الهوست للتحقق اللاحق
+                hostClient: hostClient,
+                deviceId: currentDeviceId
             };
         }
         resetRoomTimer(roomId);
         broadcastDashboardUpdate();
     });
+
 
     socket.on('joinRoom', (roomId) => {
         socket.join(roomId);
@@ -787,19 +851,28 @@ io.on('connection', (socket) => {
 
     socket.on('gameEvent', (data) => {
         if (data && data.room) {
+            const room = roomsData[data.room];
+            if (!room) return;
+
+            // التحقق الأمني: لا يُسمح بإغلاق الروم أو حفظ الحالة إلا من سوكت الهوست الحقيقي للغرفة
+            const isHostEvent = data.event === 'roomClosed' || data.event === 'saveState';
+            if (isHostEvent && room.hostSocketId !== socket.id) {
+                console.warn(`[Security Alert] Non-host socket ${socket.id} tried to trigger host event "${data.event}" in room ${data.room}`);
+                return; // تجاهل الطلب لحماية الغرفة
+            }
+
             if (data.event === 'roomClosed') {
                 socket.to(data.room).emit('roomClosed', data.payload);
-                if (roomsData[data.room]) {
-                    clearTimeout(roomsData[data.room].timer);
-                    delete roomsData[data.room];
-                }
+                clearTimeout(room.timer);
+                delete roomsData[data.room];
                 io.in(data.room).socketsLeave(data.room);
                 broadcastDashboardUpdate();
                 return;
             }
+
             resetRoomTimer(data.room);
-            if (data.event === 'saveState' && roomsData[data.room]) {
-                roomsData[data.room].gameState = data.payload;
+            if (data.event === 'saveState') {
+                room.gameState = data.payload;
             }
             socket.to(data.room).emit(data.event, data.payload);
             if (data.event === 'saveState') broadcastDashboardUpdate();
