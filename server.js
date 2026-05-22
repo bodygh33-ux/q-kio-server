@@ -440,55 +440,6 @@ app.post('/api/user/verify-session', async (req, res) => {
         return res.status(401).json({ success: false, message: 'انتهت صلاحية الجلسة' });
     }
 
-    // التحقق الحقيقي الفوري من قاعدة البيانات في حال حذف الكود أو إيقافه
-    if (db && payload.code) {
-        try {
-            if (payload.type === 'vip') {
-                const q = await db.collection('codes').where('code', '==', payload.code).get();
-                if (q.empty) {
-                    console.warn(`[Verify Session] Rejected - Code ${payload.code} deleted from Firestore`);
-                    return res.status(401).json({ success: false, message: 'تم إيقاف أو حذف كود التفعيل' });
-                }
-                let data = null;
-                q.forEach(doc => { data = doc.data(); });
-                const now = new Date();
-                const expiry = new Date(data.end);
-                if (now > expiry) {
-                    console.warn(`[Verify Session] Rejected - Code ${payload.code} expired in Firestore`);
-                    return res.status(401).json({ success: false, message: 'انتهت صلاحية كود التفعيل' });
-                }
-            } else if (payload.type === 'tiktok') {
-                const docSnap = await db.collection('tiktok_codes').doc(payload.code).get();
-                if (!docSnap.exists) {
-                    console.warn(`[Verify Session] Rejected - TikTok code ${payload.code} deleted`);
-                    return res.status(401).json({ success: false, message: 'تم حذف كود التفعيل' });
-                }
-                const data = docSnap.data();
-                const now = new Date();
-                const expiry = new Date(data.expiryDate);
-                if (now > expiry) {
-                    console.warn(`[Verify Session] Rejected - TikTok code ${payload.code} expired`);
-                    return res.status(401).json({ success: false, message: 'انتهت صلاحية كود التفعيل' });
-                }
-            } else if (payload.type === 'encyclopedia') {
-                const docSnap = await db.collection('encyclopedia_codes').doc(payload.code).get();
-                if (!docSnap.exists) {
-                    console.warn(`[Verify Session] Rejected - Encyclopedia code ${payload.code} deleted`);
-                    return res.status(401).json({ success: false, message: 'تم حذف كود التفعيل' });
-                }
-                const data = docSnap.data();
-                const now = new Date();
-                const expiry = new Date(data.expiryDate);
-                if (now > expiry) {
-                    console.warn(`[Verify Session] Rejected - Encyclopedia code ${payload.code} expired`);
-                    return res.status(401).json({ success: false, message: 'انتهت صلاحية كود التفعيل' });
-                }
-            }
-        } catch (dbError) {
-            console.error('[Verify Session] Firestore verification error (falling back to local signature verification):', dbError);
-        }
-    }
-
     console.log(`[Verify Session] Approved - client: ${payload.client}`);
     res.json({ success: true, client: payload.client, games: payload.games });
 });
