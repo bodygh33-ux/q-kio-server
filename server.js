@@ -74,11 +74,11 @@ function verifySecureToken(token) {
         if (!token) return null;
         const parts = token.split('.');
         if (parts.length !== 2) return null;
-        
+
         const payloadStr = Buffer.from(parts[0], 'base64').toString('utf8');
         const signature = parts[1];
         const expectedSignature = crypto.createHmac('sha256', SIGNING_SECRET).update(payloadStr).digest('hex');
-        
+
         if (signature !== expectedSignature) return null;
         return JSON.parse(payloadStr);
     } catch (e) {
@@ -411,9 +411,9 @@ app.post('/api/user/validate-tiktok-code', async (req, res) => {
 // 9. واجهة التحقق الآمن من التوكن والجلسة
 app.post('/api/user/verify-session', async (req, res) => {
     const { token, deviceId, type } = req.body;
-    
+
     console.log(`[Verify Session] request received - type: ${type}, deviceId: ${deviceId}`);
-    
+
     if (!token) {
         console.warn(`[Verify Session] Rejected - Missing token`);
         return res.status(400).json({ success: false, message: 'توكن مفقود' });
@@ -798,8 +798,25 @@ io.on('connection', (socket) => {
             });
 
         }).catch(err => {
-            console.error(`❌ فشل الاتصال ببث @${username}:`, err.message);
-            socket.emit('tiktok_error', { message: 'هذا الحساب ليس في بث مباشر حالياً، أو اليوزر خطأ.' });
+            console.log(`❌ فشل الاتصال ببث @${username}:`, err.message);
+            const errMsg = err.message || '';
+            const isBlocked = errMsg.includes('403') || 
+                              errMsg.includes('429') || 
+                              errMsg.toLowerCase().includes('forbidden') || 
+                              errMsg.toLowerCase().includes('too many requests') ||
+                              errMsg.toLowerCase().includes('ip') ||
+                              errMsg.toLowerCase().includes('rate limit') ||
+                              errMsg.toLowerCase().includes('status code');
+            
+            if (isBlocked) {
+                socket.emit('tiktok_error', { 
+                    message: '⚠️ نعتذر، خوادم الربط تشهد ضغطاً مؤقتاً في الوقت الحالي. يرجى الانتظار قليلاً وإعادة المحاولة لاحقاً.' 
+                });
+            } else {
+                socket.emit('tiktok_error', { 
+                    message: 'هذا الحساب ليس في بث مباشر حالياً، أو اليوزر خطأ.' 
+                });
+            }
         });
 
         socket.tiktokConn = tiktokLiveConnection;
