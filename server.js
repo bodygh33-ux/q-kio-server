@@ -446,6 +446,8 @@ app.post('/api/user/verify-session', async (req, res) => {
 
 // الخزنة الرئيسية اللي هتشيل كل بيانات الرومات المفتوحة في الرامات
 const roomsData = {};
+// سجل أوقات عمليات الربط لمنع السبام والكول داون بين الألعاب
+const connectionCooldowns = {};
 
 const io = new Server(server, {
     cors: { origin: "*", methods: ["GET", "POST"] }
@@ -666,6 +668,16 @@ io.on('connection', (socket) => {
 
         const username = data.username ? data.username.trim().toLowerCase() : null;
         if (!username) return;
+
+        // كول داون 15 ثانية بين محاولات الربط لنفس الحساب (لتجنب الحظر والسبام)
+        const now = Date.now();
+        const lastConnect = connectionCooldowns[username];
+        if (lastConnect && (now - lastConnect) < 15000) {
+            const secondsLeft = Math.ceil((15000 - (now - lastConnect)) / 1000);
+            socket.emit('tiktok_error', { message: `الرجاء الانتظار ${secondsLeft} ثانية قبل محاولة الربط مجدداً.` });
+            return;
+        }
+        connectionCooldowns[username] = now;
 
         // 1. تنظيف عالمي لأي اتصال نشط سابق لنفس اسم المستخدم لمنع تضارب الجلسات
         for (const rId in roomsData) {
