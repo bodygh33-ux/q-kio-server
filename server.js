@@ -787,6 +787,37 @@ io.on('connection', (socket) => {
                     if (matched) {
                         socket.emit('tiktok_chat', { ...data, matchedTarget: matched });
                     }
+                } else if (room.chatFilter.type === 'active_players') {
+                    const uniqueId = data.uniqueId;
+                    const comment = data.comment.trim();
+                    const playersList = room.chatFilter.players || [];
+                    
+                    if (playersList.includes(uniqueId)) {
+                        if (room.chatFilter.regex) {
+                            try {
+                                const regex = new RegExp(room.chatFilter.regex, room.chatFilter.regexFlags || '');
+                                if (regex.test(comment)) {
+                                    socket.emit('tiktok_chat', data);
+                                }
+                            } catch (regexErr) {
+                                socket.emit('tiktok_chat', data);
+                            }
+                        } else {
+                            socket.emit('tiktok_chat', data);
+                        }
+                    }
+                } else if (room.chatFilter.type === 'regex') {
+                    const comment = data.comment.trim();
+                    if (room.chatFilter.regex) {
+                        try {
+                            const regex = new RegExp(room.chatFilter.regex, room.chatFilter.regexFlags || 'i');
+                            if (regex.test(comment)) {
+                                socket.emit('tiktok_chat', data);
+                            }
+                        } catch (regexErr) {
+                            // If regex compilation fails, ignore to protect server resources
+                        }
+                    }
                 } else if (room.chatFilter.type === 'all') {
                     socket.emit('tiktok_chat', data);
                 }
