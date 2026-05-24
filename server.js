@@ -704,11 +704,35 @@ io.on('connection', (socket) => {
 
         console.log(`محاولة الاتصال ببث تيك توك: @${username}`);
 
-        let tiktokLiveConnection = new WebcastPushConnection(username, {
+        const connectionOptions = {
             processInitialData: false,
             enableExtendedGiftInfo: false,
             enableWebsocketUpgrade: true
-        });
+        };
+
+        // دعم البروكسي لتخطي حظر الـ IP من خوادم Render
+        const proxyUrl = process.env.TIKTOK_PROXY_URL;
+        if (proxyUrl) {
+            console.log(`[Proxy] توجيه اتصال التيك توك عبر البروكسي: ${proxyUrl.replace(/:[^:]*@/, ':****@')}`);
+            try {
+                const { HttpsProxyAgent } = require('https-proxy-agent');
+                const agent = new HttpsProxyAgent(proxyUrl);
+                
+                connectionOptions.webClientOptions = {
+                    httpsAgent: agent
+                };
+                connectionOptions.websocketOptions = {
+                    agent: agent
+                };
+                connectionOptions.requestOptions = {
+                    httpsAgent: agent
+                };
+            } catch (proxyErr) {
+                console.error(`❌ فشل تهيئة البروكسي:`, proxyErr.message);
+            }
+        }
+
+        let tiktokLiveConnection = new WebcastPushConnection(username, connectionOptions);
 
         tiktokLiveConnection.connect().then(state => {
             console.log(`✅ تم الاتصال بنجاح ببث: @${username} (RoomID: ${state.roomId})`);
