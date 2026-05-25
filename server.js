@@ -674,6 +674,13 @@ io.on('connection', (socket) => {
         }
     });
 
+    // إعداد فلتر مخصص من العميل لحماية السيرفر (Dynamic Filter) - مسجل مرة واحدة فقط لكل سوكت
+    socket.on('set_tiktok_filter', (filterOptions) => {
+        if (roomsData[socket.id]) {
+            roomsData[socket.id].chatFilter = filterOptions;
+        }
+    });
+
     // --- منطق ألعاب تيك توك اللحظية ---
     socket.on('tiktok_connect', (data) => {
         // التحقق الأمني: يجب أن يكون السوكت مصدقاً كـ Host من نوع tiktok
@@ -749,149 +756,175 @@ io.on('connection', (socket) => {
             }
         }
 
-        let tiktokLiveConnection = new WebcastPushConnection(username, connectionOptions);
+        const startTikTokConnection = (attempt = 1, isReconnect = false) => {
+            if (isReconnect) {
+                console.log(`[TikTok Reconnect] Attempt ${attempt} for @${username} (Socket: ${socket.id})`);
+                socket.emit('tiktok_reconnecting', { attempt, maxAttempts: 5 });
+            }
 
-        tiktokLiveConnection.connect().then(state => {
-            console.log(`✅ تم الاتصال بنجاح ببث: @${username} (RoomID: ${state.roomId})`);
+            let tiktokLiveConnection = new WebcastPushConnection(username, connectionOptions);
 
-            const profilePic = state.roomInfo?.owner?.avatar_large?.url_list?.[0] ||
-                state.roomInfo?.owner?.avatar_medium?.url_list?.[0] ||
-                state.roomInfo?.owner?.avatar_thumb?.url_list?.[0] ||
-                'https://ui-avatars.com/api/?name=' + username;
-            const nickname = state.roomInfo?.owner?.nickname || username;
+            tiktokLiveConnection.connect().then(state => {
+                console.log(`✅ تم الاتصال بنجاح ببث: @${username} (RoomID: ${state.roomId}) (Reconnect: ${isReconnect})`);
 
-            // تسجيل الروم
-            roomsData[socket.id] = {
-                createdAt: Date.now(),
-                gameState: { gameType: 'tiktok_bomb' },
-                isTikTok: true,
-                tiktokUser: username,
-                tiktokConn: tiktokLiveConnection,
-                timer: null
-            };
-            resetRoomTimer(socket.id); // بدء عداد الحذف التلقائي (30 دقيقة)
-            broadcastDashboardUpdate();
+                const profilePic = state.roomInfo?.owner?.avatar_large?.url_list?.[0] ||
+                    state.roomInfo?.owner?.avatar_medium?.url_list?.[0] ||
+                    state.roomInfo?.owner?.avatar_thumb?.url_list?.[0] ||
+                    'https://ui-avatars.com/api/?name=' + username;
+                const nickname = state.roomInfo?.owner?.nickname || username;
 
-            socket.emit('tiktok_connected', { profilePic, nickname });
-
-            // إعداد فلتر مخصص من العميل لحماية السيرفر (Dynamic Filter)
-            socket.on('set_tiktok_filter', (filterOptions) => {
-                // filterOptions: { type: 'exact_match', targets: ['answer1', 'answer2'] }
-                // أو { type: 'all' } للألعاب التي تحتاج كل الشات
-                if (roomsData[socket.id]) {
-                    roomsData[socket.id].chatFilter = filterOptions;
+                if (isReconnect) {
+                    if (roomsData[socket.id]) {
+                        roomsData[socket.id].tiktokConn = tiktokLiveConnection;
+                    }
+                    socket.emit('tiktok_reconnected', { profilePic, nickname });
+                } else {
+                    // تسجيل الروم لأول مرة
+                    roomsData[socket.id] = {
+                        createdAt: Date.now(),
+                        gameState: { gameType: 'tiktok_bomb' },
+                        isTikTok: true,
+                        tiktokUser: username,
+                        tiktokConn: tiktokLiveConnection,
+                        timer: null,
+                        chatFilter: null
+                    };
+                    resetRoomTimer(socket.id); // بدء عداد الحذف التلقائي (30 دقيقة)
+                    broadcastDashboardUpdate();
+                    socket.emit('tiktok_connected', { profilePic, nickname });
                 }
-            });
 
-            // تمرير أحداث تيك توك للعميل (مع حماية الفلترة)
-            tiktokLiveConnection.on('chat', data => {
-                const room = roomsData[socket.id];
-                if (!room || !room.chatFilter) return; // تجاهل كل الشات إذا لم يكن هناك فلتر نشط
-                if (room.chatFilter.type === 'exact') {
-                    const comment = data.comment.trim().toLowerCase();
-                    const targets = room.chatFilter.targets || [];
+                // تمرير أحداث تيك توك للعميل (مع حماية الفلترة)
+                tiktokLiveConnection.on('chat', data => {
+                    const room = roomsData[socket.id];
+                    if (!room || !room.chatFilter) return; // تجاهل كل الشات إذا لم يكن هناك فلتر نشط
+                    if (room.chatFilter.type === 'exact') {
+                        const comment = data.comment.trim().toLowerCase();
+                        const targets = room.chatFilter.targets || [];
 
-                    if (targets.includes(comment)) {
-                        socket.emit('tiktok_chat', data);
-                        // بمجرد إيجاد فائز، يتم مسح الفلتر فوراً لتجاهل باقي الإجابات
-                        room.chatFilter = null;
-                    }
-                } else if (room.chatFilter.type === 'contains_any') {
-                    // فلتر القنبلة: يرسل أي تعليق يحتوي على أي كلمة مستهدفة (بدون مسح الفلتر)
-                    const comment = data.comment.trim().toLowerCase();
-                    const targets = room.chatFilter.targets || [];
-                    const matched = targets.find(t => comment.includes(t));
-                    if (matched) {
-                        socket.emit('tiktok_chat', { ...data, matchedTarget: matched });
-                    }
-                } else if (room.chatFilter.type === 'active_players') {
-                    const uniqueId = data.uniqueId;
-                    const comment = data.comment.trim();
-                    const playersList = room.chatFilter.players || [];
-                    
-                    if (playersList.includes(uniqueId)) {
+                        if (targets.includes(comment)) {
+                            socket.emit('tiktok_chat', data);
+                            // بمجرد إيجاد فائز، يتم مسح الفلتر فوراً لتجاهل باقي الإجابات
+                            room.chatFilter = null;
+                        }
+                    } else if (room.chatFilter.type === 'contains_any') {
+                        // فلتر القنبلة: يرسل أي تعليق يحتوي على أي كلمة مستهدفة (بدون مسح الفلتر)
+                        const comment = data.comment.trim().toLowerCase();
+                        const targets = room.chatFilter.targets || [];
+                        const matched = targets.find(t => comment.includes(t));
+                        if (matched) {
+                            socket.emit('tiktok_chat', { ...data, matchedTarget: matched });
+                        }
+                    } else if (room.chatFilter.type === 'active_players') {
+                        const uniqueId = data.uniqueId;
+                        const comment = data.comment.trim();
+                        const playersList = room.chatFilter.players || [];
+                        
+                        if (playersList.includes(uniqueId)) {
+                            if (room.chatFilter.regex) {
+                                try {
+                                    const regex = new RegExp(room.chatFilter.regex, room.chatFilter.regexFlags || '');
+                                    if (regex.test(comment)) {
+                                        socket.emit('tiktok_chat', data);
+                                    }
+                                } catch (regexErr) {
+                                    socket.emit('tiktok_chat', data);
+                                }
+                            } else {
+                                socket.emit('tiktok_chat', data);
+                            }
+                        }
+                    } else if (room.chatFilter.type === 'regex') {
+                        const comment = data.comment.trim();
                         if (room.chatFilter.regex) {
                             try {
-                                const regex = new RegExp(room.chatFilter.regex, room.chatFilter.regexFlags || '');
+                                const regex = new RegExp(room.chatFilter.regex, room.chatFilter.regexFlags || 'i');
                                 if (regex.test(comment)) {
                                     socket.emit('tiktok_chat', data);
                                 }
                             } catch (regexErr) {
-                                socket.emit('tiktok_chat', data);
+                                // If regex compilation fails, ignore to protect server resources
                             }
-                        } else {
-                            socket.emit('tiktok_chat', data);
                         }
+                    } else if (room.chatFilter.type === 'all') {
+                        socket.emit('tiktok_chat', data);
                     }
-                } else if (room.chatFilter.type === 'regex') {
-                    const comment = data.comment.trim();
-                    if (room.chatFilter.regex) {
-                        try {
-                            const regex = new RegExp(room.chatFilter.regex, room.chatFilter.regexFlags || 'i');
-                            if (regex.test(comment)) {
-                                socket.emit('tiktok_chat', data);
-                            }
-                        } catch (regexErr) {
-                            // If regex compilation fails, ignore to protect server resources
+                });
+                tiktokLiveConnection.on('gift', data => {
+                    socket.emit('tiktok_gift', data);
+                });
+                tiktokLiveConnection.on('like', data => {
+                    socket.emit('tiktok_like', data);
+                });
+
+                // الاستماع لإنهاء البث أو انقطاع الاتصال من خوادم تيك توك
+                tiktokLiveConnection.on('streamEnd', (actionId) => {
+                    console.log(`[TikTok StreamEnd] Stream ended for @${username}`);
+                    socket.emit('tiktok_disconnected', 'تم إنهاء البث المباشر.');
+                    if (roomsData[socket.id]) {
+                        if (roomsData[socket.id].tiktokConn) {
+                            try { roomsData[socket.id].tiktokConn.disconnect(); } catch(e){}
                         }
+                        delete roomsData[socket.id];
+                        broadcastDashboardUpdate();
                     }
-                } else if (room.chatFilter.type === 'all') {
-                    socket.emit('tiktok_chat', data);
-                }
-            });
-            tiktokLiveConnection.on('gift', data => {
-                socket.emit('tiktok_gift', data);
-            });
-            tiktokLiveConnection.on('like', data => {
-                socket.emit('tiktok_like', data);
-            });
-
-            // الاستماع لإنهاء البث أو انقطاع الاتصال من خوادم تيك توك
-            tiktokLiveConnection.on('streamEnd', (actionId) => {
-                socket.emit('tiktok_disconnected', 'تم إنهاء البث المباشر.');
-                if (roomsData[socket.id]) {
-                    if (roomsData[socket.id].tiktokConn) {
-                        roomsData[socket.id].tiktokConn.disconnect();
-                    }
-                    delete roomsData[socket.id];
-                    broadcastDashboardUpdate();
-                }
-            });
-
-            tiktokLiveConnection.on('disconnected', () => {
-                socket.emit('tiktok_disconnected', 'انقطع الاتصال ببث التيك توك.');
-                if (roomsData[socket.id]) {
-                    if (roomsData[socket.id].tiktokConn) {
-                        roomsData[socket.id].tiktokConn.disconnect();
-                    }
-                    delete roomsData[socket.id];
-                    broadcastDashboardUpdate();
-                }
-            });
-
-        }).catch(err => {
-            console.log(`❌ فشل الاتصال ببث @${username}:`, err.message);
-            const errMsg = err.message || '';
-            const isBlocked = errMsg.includes('403') || 
-                              errMsg.includes('429') || 
-                              errMsg.toLowerCase().includes('forbidden') || 
-                              errMsg.toLowerCase().includes('too many requests') ||
-                              errMsg.toLowerCase().includes('ip') ||
-                              errMsg.toLowerCase().includes('rate limit') ||
-                              errMsg.toLowerCase().includes('status code');
-            
-            if (isBlocked) {
-                socket.emit('tiktok_error', { 
-                    message: '⚠️ نعتذر، خوادم الربط تشهد ضغطاً مؤقتاً في الوقت الحالي. يرجى الانتظار قليلاً وإعادة المحاولة لاحقاً.' 
                 });
-            } else {
-                socket.emit('tiktok_error', { 
-                    message: 'هذا الحساب ليس في بث مباشر حالياً، أو اليوزر خطأ.' 
-                });
-            }
-        });
 
-        socket.tiktokConn = tiktokLiveConnection;
+                tiktokLiveConnection.on('disconnected', () => {
+                    console.log(`[TikTok Disconnected] Connection dropped for @${username}. Initiating reconnect...`);
+                    if (roomsData[socket.id] && roomsData[socket.id].tiktokConn) {
+                        try { roomsData[socket.id].tiktokConn.disconnect(); } catch(e){}
+                    }
+                    // محاولة إعادة الاتصال فوراً
+                    if (socket.connected && roomsData[socket.id]) {
+                        startTikTokConnection(1, true);
+                    }
+                });
+
+                socket.tiktokConn = tiktokLiveConnection;
+
+            }).catch(err => {
+                console.log(`❌ فشل الاتصال ببث @${username} (محاولة ${attempt}):`, err.message);
+                
+                if (isReconnect && attempt < 5 && socket.connected && roomsData[socket.id]) {
+                    // الانتظار 5 ثواني قبل المحاولة القادمة
+                    setTimeout(() => {
+                        if (socket.connected && roomsData[socket.id]) {
+                            startTikTokConnection(attempt + 1, true);
+                        }
+                    }, 5000);
+                } else {
+                    // فشل نهائي
+                    const errMsg = err.message || '';
+                    const isBlocked = errMsg.includes('403') || 
+                                      errMsg.includes('429') || 
+                                      errMsg.toLowerCase().includes('forbidden') || 
+                                      errMsg.toLowerCase().includes('too many requests') ||
+                                      errMsg.toLowerCase().includes('ip') ||
+                                      errMsg.toLowerCase().includes('rate limit') ||
+                                      errMsg.toLowerCase().includes('status code');
+                    
+                    let finalMsg = 'هذا الحساب ليس في بث مباشر حالياً، أو اليوزر خطأ.';
+                    if (isBlocked) {
+                        finalMsg = '⚠️ نعتذر، خوادم الربط تشهد ضغطاً مؤقتاً في الوقت الحالي. يرجى الانتظار قليلاً وإعادة المحاولة لاحقاً.';
+                    } else if (isReconnect) {
+                        finalMsg = 'انقطع الاتصال ببث التيك توك وفشلت محاولات إعادة الاتصال.';
+                    }
+                    
+                    if (isReconnect) {
+                        socket.emit('tiktok_disconnected', finalMsg);
+                        if (roomsData[socket.id]) {
+                            delete roomsData[socket.id];
+                            broadcastDashboardUpdate();
+                        }
+                    } else {
+                        socket.emit('tiktok_error', { message: finalMsg });
+                    }
+                }
+            });
+        };
+
+        startTikTokConnection(1, false);
     });
 
 
