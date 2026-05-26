@@ -816,9 +816,9 @@ io.on('connection', (socket) => {
                             socket.emit('tiktok_chat', { ...data, matchedTarget: matched });
                         }
                     } else if (room.chatFilter.type === 'active_players') {
-                        const uniqueId = data.uniqueId;
+                        const uniqueId = data.uniqueId ? data.uniqueId.toLowerCase() : '';
                         const comment = data.comment.trim();
-                        const playersList = room.chatFilter.players || [];
+                        const playersList = (room.chatFilter.players || []).map(p => p.toLowerCase());
                         
                         if (playersList.includes(uniqueId)) {
                             if (room.chatFilter.regex) {
