@@ -886,13 +886,18 @@ io.on('connection', (socket) => {
             }).catch(err => {
                 console.log(`❌ فشل الاتصال ببث @${username} (محاولة ${attempt}):`, err.message);
                 
-                if (isReconnect && attempt < 5 && socket.connected && roomsData[socket.id]) {
-                    // الانتظار 5 ثواني قبل المحاولة القادمة
+                const maxAttempts = isReconnect ? 5 : 4;
+                const canRetry = attempt < maxAttempts && socket.connected && (isReconnect ? !!roomsData[socket.id] : true);
+
+                if (canRetry) {
+                    // الانتظار 3 ثواني قبل المحاولة القادمة (أو 5 ثواني في حالة إعادة الاتصال)
+                    const delay = isReconnect ? 5000 : 3000;
                     setTimeout(() => {
-                        if (socket.connected && roomsData[socket.id]) {
-                            startTikTokConnection(attempt + 1, true);
+                        const stillConnected = socket.connected && (isReconnect ? !!roomsData[socket.id] : true);
+                        if (stillConnected) {
+                            startTikTokConnection(attempt + 1, isReconnect);
                         }
-                    }, 5000);
+                    }, delay);
                 } else {
                     // فشل نهائي
                     const errMsg = err.message || '';
