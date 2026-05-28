@@ -528,6 +528,11 @@ function resetRoomTimer(roomId) {
                 roomsData[roomId].tiktokConn.disconnect();
             }
 
+            if (marathonLoops[roomId]) {
+                clearInterval(marathonLoops[roomId]);
+                delete marathonLoops[roomId];
+            }
+
             delete roomsData[roomId];
             broadcastDashboardUpdate();
         }, 30 * 60 * 1000);
@@ -592,6 +597,7 @@ app.get('/dashboard', (req, res) => {
                     'coordinates': 'إحداثيات 🎯',
                     'tiktok_bomb': 'تيك توك: القنبلة 💣',
                     'tiktok_roulette': 'تيك توك: الروليت والإقصاء 🎡',
+                    'tiktok_marathon': 'تيك توك: الماراثون الجماعي 🏃‍♂️',
                     'غير معروف': 'في الانتظار ⏳'
                 };
                 
@@ -656,6 +662,10 @@ app.get('/delete-room', (req, res) => {
         if (roomsData[roomId].tiktokConn) {
             roomsData[roomId].tiktokConn.disconnect();
         }
+        if (marathonLoops[roomId]) {
+            clearInterval(marathonLoops[roomId]);
+            delete marathonLoops[roomId];
+        }
         io.to(roomId).emit('roomClosed', 'تم إغلاق الغرفة من قبل الإدارة');
         io.in(roomId).socketsLeave(roomId);
         delete roomsData[roomId];
@@ -663,6 +673,375 @@ app.get('/delete-room', (req, res) => {
     }
     res.send('تم الحذف بنجاح');
 });
+
+
+// ==========================================
+//   منطق الماراثون الجماعي (Marathon Game Backend)
+// ==========================================
+const marathonLoops = {};
+
+const MARATHON_WORDS = [
+    "مسرع", "متحمس", "بطل", "سباق", "نصر", "تحدي", "قوة", "سرعة", "ماراثون", "وقود",
+    "فوز", "نجم", "اسطورة", "عزيمة", "طاقة", "حماس", "قمة", "كاسر", "شجاع", "ذكي"
+];
+
+function handleMarathonChat(roomId, data) {
+    const room = roomsData[roomId];
+    if (!room || !room.marathonState) return;
+    const state = room.marathonState;
+    const uniqueId = data.uniqueId ? data.uniqueId.toLowerCase() : '';
+    const comment = data.comment.trim();
+    const nickname = data.nickname || data.uniqueId;
+    const avatar = data.profilePictureUrl || `https://ui-avatars.com/api/?name=${encodeURIComponent(nickname)}`;
+
+    if (!state.isActive) {
+        if (state.entryType === 'word') {
+            const commentNorm = normalizeArabicForServer(comment);
+            const entryNorm = normalizeArabicForServer(state.entryValue);
+            if (commentNorm.includes(entryNorm) || comment.toLowerCase().includes(state.entryValue.toLowerCase())) {
+                joinMarathonPlayer(state, uniqueId, nickname, avatar);
+            }
+        }
+    } else {
+        const player = state.players[uniqueId];
+        if (player && state.wordChallenge.active && !player.isFrozen) {
+            const commentNorm = normalizeArabicForServer(comment);
+            const targetNorm = normalizeArabicForServer(state.wordChallenge.word);
+            if (commentNorm === targetNorm || comment.toLowerCase() === state.wordChallenge.word.toLowerCase()) {
+                const alreadySolved = state.wordChallenge.slots.some(s => s.id === uniqueId);
+                if (!alreadySolved && state.wordChallenge.slots.length < 3) {
+                    let boost = 0;
+                    const slotIndex = state.wordChallenge.slots.length;
+                    if (slotIndex === 0) boost = 0.04;      // أقصى دفعة سرعة
+                    else if (slotIndex === 1) boost = 0.025; // دفعة متوسطة
+                    else if (slotIndex === 2) boost = 0.015; // دفعة خفيفة
+
+                    state.wordChallenge.slots.push({
+                        id: uniqueId,
+                        name: nickname,
+                        avatar: avatar,
+                        boost: boost
+                    });
+
+                    player.wordBoost = boost;
+                    player.comments++;
+
+                    if (state.wordChallenge.slots.length === 3) {
+                        state.wordChallenge.solvedAt = Date.now();
+                    }
+                }
+            }
+        }
+    }
+}
+
+function handleMarathonLike(roomId, data) {
+    const room = roomsData[roomId];
+    if (!room || !room.marathonState) return;
+    const state = room.marathonState;
+    const uniqueId = data.uniqueId ? data.uniqueId.toLowerCase() : '';
+    const nickname = data.nickname || data.uniqueId;
+    const avatar = data.profilePictureUrl || `https://ui-avatars.com/api/?name=${encodeURIComponent(nickname)}`;
+    const likeCount = data.likeCount || 1;
+
+    if (!state.isActive) {
+        if (state.entryType === 'likes' || state.entryType === 'all') {
+            joinMarathonPlayer(state, uniqueId, nickname, avatar);
+        }
+    } else {
+        const player = state.players[uniqueId];
+        if (player) {
+            player.likes += likeCount;
+            player.recentLikes += likeCount;
+            player.lastActive = Date.now();
+        } else if (state.entryType === 'likes' || state.entryType === 'all') {
+            if (Object.keys(state.players).length < state.maxPlayers) {
+                const newPlayer = joinMarathonPlayer(state, uniqueId, nickname, avatar);
+                if (newPlayer) {
+                    newPlayer.likes += likeCount;
+                    newPlayer.recentLikes += likeCount;
+                }
+            }
+        }
+    }
+}
+
+function handleMarathonGift(roomId, data) {
+    const room = roomsData[roomId];
+    if (!room || !room.marathonState) return;
+    const state = room.marathonState;
+    const uniqueId = data.uniqueId ? data.uniqueId.toLowerCase() : '';
+    const nickname = data.nickname || data.uniqueId;
+    const avatar = data.profilePictureUrl || `https://ui-avatars.com/api/?name=${encodeURIComponent(nickname)}`;
+    const giftName = data.giftName || '';
+
+    if (!state.isActive) {
+        if (state.entryType === 'gift') {
+            joinMarathonPlayer(state, uniqueId, nickname, avatar);
+        }
+    }
+
+    const player = state.players[uniqueId];
+    if (player) {
+        player.gifts++;
+        
+        if (giftName.toLowerCase().includes(state.smallGiftId.toLowerCase())) {
+            const spillPos = (player.progress - 0.03 + 1) % 1;
+            const spillId = 'oil_' + Date.now() + '_' + Math.floor(Math.random()*1000);
+            state.oilSpills.push({
+                id: spillId,
+                progress: spillPos,
+                expiresAt: Date.now() + 6000, // 6 ثوانٍ
+                spawnedBy: nickname
+            });
+            console.log(`[Marathon Spill] Created by ${nickname} at progress ${spillPos}`);
+        }
+        else if (giftName.toLowerCase().includes(state.mediumGiftId.toLowerCase())) {
+            const sorted = Object.values(state.players).sort((a,b) => {
+                if (a.laps !== b.laps) return b.laps - a.laps;
+                return b.progress - a.progress;
+            });
+            const target = sorted[0];
+            if (target) {
+                const rocketId = 'rocket_' + Date.now() + '_' + Math.floor(Math.random()*1000);
+                state.rockets.push({
+                    id: rocketId,
+                    progress: player.progress,
+                    targetId: target.id,
+                    speed: 0.05, // السرعة لكل ثانية
+                    spawnedBy: nickname,
+                    expires: false
+                });
+                console.log(`[Marathon Rocket] Fired by ${nickname} targeting ${target.name}`);
+            }
+        }
+    }
+}
+
+function joinMarathonPlayer(state, uniqueId, nickname, avatar) {
+    if (state.players[uniqueId]) return state.players[uniqueId];
+    if (Object.keys(state.players).length >= state.maxPlayers) return null;
+
+    const newPlayer = {
+        id: uniqueId,
+        name: nickname,
+        avatar: avatar,
+        progress: 0,
+        laps: 0,
+        speed: 0.005,
+        wordBoost: 0,
+        likes: 0,
+        comments: 0,
+        gifts: 0,
+        recentLikes: 0,
+        isFrozen: false,
+        freezeUntil: 0,
+        lastActive: Date.now()
+    };
+    state.players[uniqueId] = newPlayer;
+    
+    // إرسال تحديث فوري للاعب المنضم في مرحلة اللوبي
+    io.to(state.roomId).emit('marathon_lobby_update', {
+        players: Object.values(state.players)
+    });
+
+    return newPlayer;
+}
+
+function normalizeArabicForServer(text) {
+    if (!text) return '';
+    return text.normalize('NFKD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .toLowerCase()
+        .replace(/[أإآ]/g, 'ا')
+        .replace(/ة/g, 'ه')
+        .replace(/[yيى]/g, 'ي')
+        .replace(/[^\w\s\u0600-\u06FF]/gi, '')
+        .trim();
+}
+
+function startMarathonLoop(roomId, socket) {
+    if (marathonLoops[roomId]) {
+        clearInterval(marathonLoops[roomId]);
+    }
+
+    const room = roomsData[roomId];
+    if (!room || !room.marathonState) return;
+    const state = room.marathonState;
+    state.startTime = Date.now();
+    state.isActive = true;
+    state.lastWordSpawn = Date.now();
+
+    const interval = setInterval(() => {
+        const currentRoom = roomsData[roomId];
+        if (!currentRoom || !currentRoom.marathonState || !currentRoom.marathonState.isActive) {
+            clearInterval(interval);
+            delete marathonLoops[roomId];
+            return;
+        }
+
+        const mState = currentRoom.marathonState;
+        const elapsed = Math.floor((Date.now() - mState.startTime) / 1000);
+        const timeLeft = Math.max(0, mState.duration - elapsed);
+
+        if (timeLeft <= 0) {
+            mState.isActive = false;
+            clearInterval(interval);
+            delete marathonLoops[roomId];
+
+            const playersArr = Object.values(mState.players);
+            
+            const sortedByDistance = [...playersArr].sort((a, b) => {
+                if (a.laps !== b.laps) return b.laps - a.laps;
+                return b.progress - a.progress;
+            });
+            const champion = sortedByDistance[0] || null;
+
+            const sortedByGifts = [...playersArr].sort((a, b) => b.gifts - a.gifts);
+            const tank = sortedByGifts[0] && sortedByGifts[0].gifts > 0 ? sortedByGifts[0] : null;
+
+            const sortedByEngagement = [...playersArr].sort((a, b) => (b.likes + b.comments) - (a.likes + a.comments));
+            const goldenRunner = sortedByEngagement[0] && (sortedByEngagement[0].likes + sortedByEngagement[0].comments > 0) ? sortedByEngagement[0] : null;
+
+            socket.emit('marathon_tick', {
+                players: playersArr,
+                oilSpills: mState.oilSpills,
+                rockets: mState.rockets,
+                wordChallenge: mState.wordChallenge,
+                timeLeft: 0,
+                status: "finished",
+                winners: {
+                    champion: champion ? { name: champion.name, avatar: champion.avatar, laps: champion.laps } : null,
+                    tank: tank ? { name: tank.name, avatar: tank.avatar, score: tank.gifts } : null,
+                    goldenRunner: goldenRunner ? { name: goldenRunner.name, avatar: goldenRunner.avatar, score: goldenRunner.likes + goldenRunner.comments } : null
+                }
+            });
+            return;
+        }
+
+        const now = Date.now();
+
+        // 1. تحديث بقع الزيت
+        mState.oilSpills = mState.oilSpills.filter(spill => now < spill.expiresAt);
+
+        // 2. تحديث اللاعبين وحركاتهم
+        Object.values(mState.players).forEach(p => {
+            if (p.isFrozen) {
+                if (now >= p.freezeUntil) {
+                    p.isFrozen = false;
+                } else {
+                    p.speed = 0;
+                    p.wordBoost = 0;
+                    p.recentLikes = 0;
+                    return;
+                }
+            }
+
+            // السرعة الأساسية
+            let speed = 0.0035;
+
+            // سرعة التكبيس (Capped at max likes speed)
+            if (p.recentLikes > 0) {
+                const likesBoost = Math.min(0.015, p.recentLikes * 0.0006);
+                speed += likesBoost;
+                p.recentLikes = 0; // استهلاك التكبيسات المستلمة
+            } else {
+                speed += 0.0005; // سرعة تباطؤ تدريجية
+            }
+
+            // دفعة الكلمات
+            if (p.wordBoost > 0) {
+                speed += p.wordBoost;
+                p.wordBoost *= 0.65; // اضمحلال سرعة الكلمة بنسبة 35% في الثانية
+                if (p.wordBoost < 0.0008) p.wordBoost = 0;
+            }
+
+            // فحص بقعة الزيت
+            const onOil = mState.oilSpills.some(spill => {
+                const diff = Math.abs((p.progress % 1) - spill.progress);
+                const circularDiff = Math.min(diff, 1 - diff);
+                return circularDiff < 0.025; // 2.5% من مسافة المضمار
+            });
+            if (onOil) {
+                speed *= 0.35; // إبطاء بنسبة 65%
+            }
+
+            p.speed = speed;
+            p.progress += speed;
+            if (p.progress >= 1) {
+                p.laps += Math.floor(p.progress);
+                p.progress = p.progress % 1;
+            }
+        });
+
+        // 3. تحديث الصواريخ
+        mState.rockets.forEach(rocket => {
+            const targetPlayer = mState.players[rocket.targetId];
+            if (!targetPlayer) {
+                rocket.expires = true;
+                return;
+            }
+            const targetTotalProgress = targetPlayer.laps + targetPlayer.progress;
+            const diff = targetTotalProgress - rocket.progress;
+            if (diff <= 0) {
+                rocket.expires = true;
+                targetPlayer.isFrozen = true;
+                targetPlayer.freezeUntil = now + 4000;
+            } else {
+                rocket.progress += rocket.speed;
+                if (rocket.progress >= targetTotalProgress || Math.abs(rocket.progress - targetTotalProgress) < 0.02) {
+                    rocket.expires = true;
+                    targetPlayer.isFrozen = true;
+                    targetPlayer.freezeUntil = now + 4000; // تجميد 4 ثوانٍ
+                }
+            }
+        });
+        mState.rockets = mState.rockets.filter(r => !r.expires);
+
+        // 4. تحديث تحدي الكلمات
+        if (!mState.wordChallenge.active) {
+            if (now - mState.lastWordSpawn > 25000) { // ظهور كلمة جديدة كل 25 ثانية
+                const randomWord = MARATHON_WORDS[Math.floor(Math.random() * MARATHON_WORDS.length)];
+                mState.wordChallenge = {
+                    word: randomWord,
+                    slots: [],
+                    active: true,
+                    spawnedAt: now,
+                    solvedAt: 0
+                };
+                mState.lastWordSpawn = now;
+            }
+        } else {
+            if (mState.wordChallenge.solvedAt > 0) {
+                if (now - mState.wordChallenge.solvedAt > 5000) { // تختفي بعد 5 ثوانٍ من حلها
+                    mState.wordChallenge = { word: "", slots: [], active: false, spawnedAt: 0, solvedAt: 0 };
+                    mState.lastWordSpawn = now;
+                }
+            } else {
+                if (now - mState.wordChallenge.spawnedAt > 15000) { // تختفي بعد 15 ثانية إن لم تُحل
+                    mState.wordChallenge = { word: "", slots: [], active: false, spawnedAt: 0, solvedAt: 0 };
+                    mState.lastWordSpawn = now;
+                }
+            }
+        }
+
+        socket.emit('marathon_tick', {
+            players: Object.values(mState.players),
+            oilSpills: mState.oilSpills,
+            rockets: mState.rockets.map(r => ({
+                id: r.id,
+                progress: r.progress % 1,
+                targetId: r.targetId
+            })),
+            wordChallenge: mState.wordChallenge,
+            timeLeft: timeLeft,
+            status: "active"
+        });
+
+    }, 1000);
+
+    marathonLoops[roomId] = interval;
+}
 
 
 io.on('connection', (socket) => {
@@ -678,6 +1057,56 @@ io.on('connection', (socket) => {
     socket.on('set_tiktok_filter', (filterOptions) => {
         if (roomsData[socket.id]) {
             roomsData[socket.id].chatFilter = filterOptions;
+        }
+    });
+
+    // --- استقبال أحداث لعبة الماراثون الجماعي ---
+    socket.on('marathon_setup', (configOptions) => {
+        if (roomsData[socket.id]) {
+            roomsData[socket.id].gameState = { gameType: 'tiktok_marathon' };
+            roomsData[socket.id].marathonState = {
+                roomId: socket.id,
+                players: {},
+                wordChallenge: { word: "", slots: [], active: false, spawnedAt: 0, solvedAt: 0 },
+                oilSpills: [],
+                rockets: [],
+                startTime: 0,
+                duration: configOptions.duration || 180,
+                maxPlayers: configOptions.maxPlayers || 100,
+                isActive: false,
+                smallGiftId: configOptions.smallGiftId || 'Rose',
+                mediumGiftId: configOptions.mediumGiftId || 'Doughnut',
+                entryType: configOptions.entryType || 'likes',
+                entryValue: configOptions.entryValue || '',
+                lastWordSpawn: 0
+            };
+            console.log(`[Marathon Setup] Completed for room ${socket.id}`);
+            socket.emit('marathon_setup_success');
+        }
+    });
+
+    socket.on('marathon_start', () => {
+        if (roomsData[socket.id] && roomsData[socket.id].marathonState) {
+            console.log(`[Marathon Start] Starting loop for room ${socket.id}`);
+            startMarathonLoop(socket.id, socket);
+        }
+    });
+
+    socket.on('marathon_reset', () => {
+        const roomId = socket.id;
+        if (marathonLoops[roomId]) {
+            clearInterval(marathonLoops[roomId]);
+            delete marathonLoops[roomId];
+        }
+        if (roomsData[roomId] && roomsData[roomId].marathonState) {
+            const state = roomsData[roomId].marathonState;
+            state.isActive = false;
+            state.players = {};
+            state.oilSpills = [];
+            state.rockets = [];
+            state.wordChallenge = { word: "", slots: [], active: false, spawnedAt: 0, solvedAt: 0 };
+            console.log(`[Marathon Reset] Race state cleared for room ${roomId}`);
+            socket.emit('marathon_reset_success');
         }
     });
 
@@ -797,7 +1226,12 @@ io.on('connection', (socket) => {
                 // تمرير أحداث تيك توك للعميل (مع حماية الفلترة)
                 tiktokLiveConnection.on('chat', data => {
                     const room = roomsData[socket.id];
-                    if (!room || !room.chatFilter) return; // تجاهل كل الشات إذا لم يكن هناك فلتر نشط
+                    if (!room) return;
+                    if (room.gameState && room.gameState.gameType === 'tiktok_marathon') {
+                        handleMarathonChat(socket.id, data);
+                        return;
+                    }
+                    if (!room.chatFilter) return; // تجاهل كل الشات إذا لم يكن هناك فلتر نشط
                     if (room.chatFilter.type === 'exact') {
                         const comment = data.comment.trim().toLowerCase();
                         const targets = room.chatFilter.targets || [];
@@ -851,9 +1285,19 @@ io.on('connection', (socket) => {
                     }
                 });
                 tiktokLiveConnection.on('gift', data => {
+                    const room = roomsData[socket.id];
+                    if (room && room.gameState && room.gameState.gameType === 'tiktok_marathon') {
+                        handleMarathonGift(socket.id, data);
+                        return;
+                    }
                     socket.emit('tiktok_gift', data);
                 });
                 tiktokLiveConnection.on('like', data => {
+                    const room = roomsData[socket.id];
+                    if (room && room.gameState && room.gameState.gameType === 'tiktok_marathon') {
+                        handleMarathonLike(socket.id, data);
+                        return;
+                    }
                     socket.emit('tiktok_like', data);
                 });
 
@@ -940,6 +1384,10 @@ io.on('connection', (socket) => {
             socket.tiktokConn.disconnect();
             socket.tiktokConn = null;
         }
+        if (marathonLoops[socket.id]) {
+            clearInterval(marathonLoops[socket.id]);
+            delete marathonLoops[socket.id];
+        }
         if (roomsData[socket.id]) {
             clearTimeout(roomsData[socket.id].timer);
             delete roomsData[socket.id];
@@ -972,6 +1420,10 @@ io.on('connection', (socket) => {
                 // تنظيف اتصال تيك توك لو كان موجود
                 if (existingRoom.tiktokConn) {
                     existingRoom.tiktokConn.disconnect();
+                }
+                if (marathonLoops[existingRoomId]) {
+                    clearInterval(marathonLoops[existingRoomId]);
+                    delete marathonLoops[existingRoomId];
                 }
                 clearTimeout(existingRoom.timer);
                 delete roomsData[existingRoomId];
@@ -1006,6 +1458,10 @@ io.on('connection', (socket) => {
     socket.on('disconnect', () => {
         if (socket.tiktokConn) {
             socket.tiktokConn.disconnect();
+        }
+        if (marathonLoops[socket.id]) {
+            clearInterval(marathonLoops[socket.id]);
+            delete marathonLoops[socket.id];
         }
         if (roomsData[socket.id]) {
             delete roomsData[socket.id];
