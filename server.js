@@ -781,6 +781,39 @@ function handleMarathonLike(roomId, data) {
     }
 }
 
+function handleMarathonShare(roomId, data) {
+    const room = roomsData[roomId];
+    if (!room || !room.marathonState) return;
+    const state = room.marathonState;
+    const uniqueId = data.uniqueId ? data.uniqueId.toLowerCase() : '';
+    const nickname = data.nickname || data.uniqueId;
+    const avatar = data.profilePictureUrl || `https://ui-avatars.com/api/?name=${encodeURIComponent(nickname)}`;
+
+    if (!state.isActive) {
+        if (state.entryType === 'all') {
+            joinMarathonPlayer(state, uniqueId, nickname, avatar);
+        }
+    } else {
+        const player = state.players[uniqueId];
+        if (player) {
+            if (!player.shares) player.shares = 0;
+            player.shares++;
+            player.lastActive = Date.now();
+
+            if (player.shares === 5 && !player.shareBoostUsed) {
+                player.shareBoostUsed = true;
+                player.boostUntil = Date.now() + 6000; // 6 seconds temporary double speed boost
+                io.to(roomId).emit('marathon_milestone', {
+                    playerName: nickname,
+                    milestone: '5 شير للبث',
+                    duration: 6,
+                    isShare: true
+                });
+            }
+        }
+    }
+}
+
 function handleMarathonGift(roomId, data) {
     const room = roomsData[roomId];
     if (!room || !room.marathonState) return;
@@ -853,6 +886,8 @@ function joinMarathonPlayer(state, uniqueId, nickname, avatar) {
         freezeUntil: 0,
         reachedMilestones: [],
         boostUntil: 0,
+        shares: 0,
+        shareBoostUsed: false,
         lastActive: Date.now()
     };
     state.players[uniqueId] = newPlayer;
@@ -1337,6 +1372,14 @@ io.on('connection', (socket) => {
                         return;
                     }
                     socket.emit('tiktok_like', data);
+                });
+                tiktokLiveConnection.on('share', data => {
+                    const room = roomsData[socket.id];
+                    if (room && room.gameState && room.gameState.gameType === 'tiktok_marathon') {
+                        handleMarathonShare(socket.id, data);
+                        return;
+                    }
+                    socket.emit('tiktok_share', data);
                 });
 
                 // الاستماع لإنهاء البث أو انقطاع الاتصال من خوادم تيك توك
