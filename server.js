@@ -754,6 +754,21 @@ function handleMarathonLike(roomId, data) {
             player.likes += likeCount;
             player.recentLikes += likeCount;
             player.lastActive = Date.now();
+            
+            // Check milestones: 200, 400, 800, 1600
+            const milestones = [200, 400, 800, 1600];
+            if (!player.reachedMilestones) player.reachedMilestones = [];
+            milestones.forEach(m => {
+                if (player.likes >= m && !player.reachedMilestones.includes(m)) {
+                    player.reachedMilestones.push(m);
+                    player.boostUntil = Date.now() + 6000; // 6 seconds temporary double speed boost
+                    io.to(roomId).emit('marathon_milestone', {
+                        playerName: nickname,
+                        milestone: m,
+                        duration: 6
+                    });
+                }
+            });
         } else if (state.entryType === 'likes' || state.entryType === 'all') {
             if (Object.keys(state.players).length < state.maxPlayers) {
                 const newPlayer = joinMarathonPlayer(state, uniqueId, nickname, avatar);
@@ -808,7 +823,7 @@ function handleMarathonGift(roomId, data) {
                     id: rocketId,
                     progress: player.progress,
                     targetId: target.id,
-                    speed: 0.05, // السرعة لكل ثانية
+                    speed: 0.15, // السرعة لكل ثانية (تمت زيادتها من 0.05)
                     spawnedBy: nickname,
                     expires: false
                 });
@@ -828,7 +843,7 @@ function joinMarathonPlayer(state, uniqueId, nickname, avatar) {
         avatar: avatar,
         progress: 0,
         laps: 0,
-        speed: 0.005,
+        speed: 0.012,
         wordBoost: 0,
         likes: 0,
         comments: 0,
@@ -836,6 +851,8 @@ function joinMarathonPlayer(state, uniqueId, nickname, avatar) {
         recentLikes: 0,
         isFrozen: false,
         freezeUntil: 0,
+        reachedMilestones: [],
+        boostUntil: 0,
         lastActive: Date.now()
     };
     state.players[uniqueId] = newPlayer;
@@ -937,12 +954,12 @@ function startMarathonLoop(roomId, socket) {
                 }
             }
 
-            // السرعة الأساسية
-            let speed = 0.0035;
+            // السرعة الأساسية (تمت زيادتها لتكون مبهجة)
+            let speed = 0.012;
 
             // سرعة التكبيس (Capped at max likes speed)
             if (p.recentLikes > 0) {
-                const likesBoost = Math.min(0.015, p.recentLikes * 0.0006);
+                const likesBoost = Math.min(0.025, p.recentLikes * 0.002);
                 speed += likesBoost;
                 p.recentLikes = 0; // استهلاك التكبيسات المستلمة
             } else {
@@ -964,6 +981,12 @@ function startMarathonLoop(roomId, socket) {
             });
             if (onOil) {
                 speed *= 0.35; // إبطاء بنسبة 65%
+            }
+
+            // تفعيل مضاعفة السرعة للتكبيس
+            p.isBoosted = now < p.boostUntil;
+            if (p.isBoosted) {
+                speed *= 2.0;
             }
 
             p.speed = speed;
@@ -1074,8 +1097,8 @@ io.on('connection', (socket) => {
                 duration: configOptions.duration || 180,
                 maxPlayers: configOptions.maxPlayers || 100,
                 isActive: false,
-                smallGiftId: configOptions.smallGiftId || 'Rose',
-                mediumGiftId: configOptions.mediumGiftId || 'Doughnut',
+                smallGiftId: configOptions.smallGiftId || 'Heart',
+                mediumGiftId: configOptions.mediumGiftId || 'Crown',
                 entryType: configOptions.entryType || 'likes',
                 entryValue: configOptions.entryValue || '',
                 lastWordSpawn: 0
@@ -1107,6 +1130,21 @@ io.on('connection', (socket) => {
             state.wordChallenge = { word: "", slots: [], active: false, spawnedAt: 0, solvedAt: 0 };
             console.log(`[Marathon Reset] Race state cleared for room ${roomId}`);
             socket.emit('marathon_reset_success');
+        }
+    });
+
+    socket.on('marathon_kick_player', (data) => {
+        const roomId = socket.id;
+        const targetId = data.playerId;
+        if (roomsData[roomId] && roomsData[roomId].marathonState) {
+            const state = roomsData[roomId].marathonState;
+            if (state.players[targetId]) {
+                delete state.players[targetId];
+                console.log(`[Marathon Kick] Kicked player ${targetId} from room ${roomId}`);
+                io.to(roomId).emit('marathon_lobby_update', {
+                    players: Object.values(state.players)
+                });
+            }
         }
     });
 
