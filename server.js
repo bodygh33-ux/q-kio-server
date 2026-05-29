@@ -853,15 +853,16 @@ function handleMarathonGift(roomId, data) {
     if (player) {
         player.gifts++;
         
-        // فحص تفعيل بوست هدية التيك توك (1 عملة)
-        if (giftName.toLowerCase().includes('tiktok')) {
+        // فحص تفعيل بوست هدية التيك توك (1 عملة - مرة واحدة فقط لكل شخص)
+        if (giftName.toLowerCase().includes('tiktok') && !player.tiktokBoostUsed) {
+            player.tiktokBoostUsed = true;
             player.tiktokBoostUntil = Date.now() + 6000; // 6 ثوانٍ من التوربو الفائق
             io.to(roomId).emit('marathon_milestone', {
                 playerName: nickname,
                 isTiktokBoost: true,
                 boostDuration: 6
             });
-            console.log(`[Marathon TikTok Boost] Triggered for ${nickname}`);
+            console.log(`[Marathon TikTok Boost] Triggered for ${nickname} (once-off)`);
         }
 
         if (giftName.toLowerCase().includes(state.smallGiftId.toLowerCase())) {
@@ -930,6 +931,7 @@ function joinMarathonPlayer(state, uniqueId, nickname, avatar) {
         reachedMilestones: [],
         boostUntil: 0,
         tiktokBoostUntil: 0,
+        tiktokBoostUsed: false,
         shares: 0,
         shareBoostUsed: false,
         hitOilSpills: [], // تتبع بقع الزيت التي اصطدم بها لتجنب تكرار الإشعار
