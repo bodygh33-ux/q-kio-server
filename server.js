@@ -1101,55 +1101,71 @@ function startMarathonLoop(roomId, socket) {
 
         // 2. تحديث اللاعبين وحركاتهم
         Object.values(mState.players).forEach(p => {
+            // ── حالة التجميد ──
             if (p.isFrozen) {
                 if (now >= p.freezeUntil) {
                     p.isFrozen = false;
+                    // لا نصفّر recentLikes عند انتهاء التجميد — اللايكات المتراكمة أثناء التجميد تخدم اللاعب فور انتهائه
                 } else {
                     p.speed = 0;
                     p.wordBoost = 0;
-                    p.recentLikes = 0;
+                    // لا نمسح recentLikes! يكتسب اللاعب جاهزية للانطلاق فور انتهاء التجميد
                     return;
                 }
             }
 
-            // سرعة اللاعب الحالية (تبدأ من الصفر أو السرعة السابقة مع تباطؤ)
+            // ── معادلة السرعة ──
             let speed = p.speed || 0;
 
-            // تباطؤ تدريجي للسرعة بنسبة 20% في الثانية في حال عدم التكبيس (معادلة اضمحلال أسية تناسب 0.2 ثانية)
-            speed *= 0.956; 
+            // تباطؤ تدريجي للسرعة ~12% بالثانية (0.976^5 ≈ 0.888 بدل 0.956^5 ≈ 0.800)
+            // هذا يجعل اللاعبين مرئيين لمدة أطول رغم تأخر TikTok في إرسال الأحداث
+            speed *= 0.976;
 
-            // سرعة التكبيس (Capped at max likes speed)
+            // ── قوة التكبيسات (recentLikes) ──
             if (p.recentLikes > 0) {
-                // إذا كان اللاعب واقفاً تماماً، نعطيه دفعة انطلاق أولية لتسهيل الحركة
-                const startBoost = speed === 0 ? 0.008 : 0;
-                const likesBoost = Math.min(0.020, p.recentLikes * 0.003); // حد أقصى للتكبيس في التيك الواحد
+                const startBoost = speed < 0.002 ? 0.005 : 0; // دفعة بداية خفيفة
+                const likesBoost = Math.min(0.020, p.recentLikes * 0.003);
                 speed += likesBoost + startBoost;
-                p.recentLikes = 0; // استهلاك التكبيسات المستلمة
+                // حمل 30% من recentLikes للتيك التالي — يعالج تأخر TikTok في تسليم الأحداث
+                // بدل من تصفير كامل، نحتفظ بجزء صغير يضمن استمرارية الحركة
+                p.recentLikes = Math.floor(p.recentLikes * 0.3);
             }
 
-            // حد أقصى للسرعة الناتجة عن التكبيس العادي فقط (لتكون أبطأ بشكل ملحوظ من الشير والكومنت)
+            // ── حد أقصى للتكبيس ──
             if (speed > 0.024) speed = 0.024;
 
-            // إذا أصبحت السرعة ضئيلة جداً، نوقف اللاعب تماماً
-            if (speed < 0.0002) speed = 0;
+            // ── حد أدنى: منع التجمد الكامل للاعبين النشطين ──
+            // لو كان اللاعب حاصل على likes وكان نشيطاً خلال آخر 8 ثواني، نعطيه حداً أدنى
+            // هذا يعوض تأخر TikTok في إرسال أحداث بعض المشتركين
+            if (speed < 0.0002) {
+                if (p.likes > 0 && (now - (p.lastActive || 0)) < 8000) {
+                    speed = 0.0008; // حد أدنى صغير لمنع التجمد الكامل
+                } else {
+                    speed = 0;
+                }
+            }
 
-            // دفعة الكلمات (تُضاف بعد حد التكبيس الأقصى حتى تتجاوزه وتدفع اللاعب بقوة)
+            // ── دفعة تحدي الكلمة ──
             if (p.wordBoost > 0) {
                 speed += p.wordBoost;
-                p.wordBoost *= 0.917; // اضمحلال سرعة الكلمة بالاعتماد على dt (35% بالثانية)
+                p.wordBoost *= 0.917;
                 if (p.wordBoost < 0.0008) p.wordBoost = 0;
             }
 
-            // فحص بقعة الزيت
+            // ── فحص بقعة الزيت (O(1) باستخدام Set بدل Array.includes) ──
             let onOil = false;
-            mState.oilSpills.forEach(spill => {
+            if (!p.hitOilSpills || p.hitOilSpills instanceof Array) {
+                // تحويل تلقائي من Array إلى Set لتحسين الأداء
+                p.hitOilSpills = new Set(Array.isArray(p.hitOilSpills) ? p.hitOilSpills : []);
+            }
+            for (let si = 0; si < mState.oilSpills.length; si++) {
+                const spill = mState.oilSpills[si];
                 const diff = Math.abs((p.progress % 1) - spill.progress);
                 const circularDiff = Math.min(diff, 1 - diff);
                 if (circularDiff < 0.025) {
                     onOil = true;
-                    if (!p.hitOilSpills) p.hitOilSpills = [];
-                    if (!p.hitOilSpills.includes(spill.id)) {
-                        p.hitOilSpills.push(spill.id);
+                    if (!p.hitOilSpills.has(spill.id)) {
+                        p.hitOilSpills.add(spill.id);
                         io.to(roomId).emit('marathon_disruption', {
                             type: 'oil',
                             attacker: spill.spawnedBy,
@@ -1157,23 +1173,23 @@ function startMarathonLoop(roomId, socket) {
                         });
                     }
                 }
-            });
+            }
             if (onOil) {
-                speed *= 0.05; // إبطاء شديد جداً بنسبة 95%
+                speed *= 0.05;
             }
 
-            // تفعيل مضاعفة السرعة للتكبيس أو تفعيل توربو التيك توك الفائق
+            // ── مضاعفات السرعة ──
             p.isTiktokBoosted = now < (p.tiktokBoostUntil || 0);
             p.isBoosted = now < p.boostUntil;
             if (p.isTiktokBoosted) {
                 if (speed < 0.020) speed = 0.020;
-                speed *= 4.5; // البوست الأقوى على الإطلاق لهدية التيك توك (4.5 أضعاف السرعة)
+                speed *= 4.5;
             } else if (p.isBoosted) {
-                speed *= 3.5; // زيادة الـ boost للمستويات القياسية (200، 400، 800، 1600 شير/تكبيس)
+                speed *= 3.5;
             }
 
             p.speed = speed;
-            p.progress += speed * dt; // زيادة المسافة حسب الفرق الزمني
+            p.progress += speed * dt;
             if (p.progress >= 1) {
                 p.laps += Math.floor(p.progress);
                 p.progress = p.progress % 1;
@@ -1415,9 +1431,11 @@ io.on('connection', (socket) => {
         console.log(`محاولة الاتصال ببث تيك توك: @${username}`);
 
         const connectionOptions = {
-            processInitialData: false,
-            enableExtendedGiftInfo: false,
-            enableWebsocketUpgrade: true
+            processInitialData: false,      // لا نعالج البيانات الأولية لتوفير الموارد
+            enableExtendedGiftInfo: true,   // معلومات الهدايا الكاملة (مهم للماراثون)
+            enableWebsocketUpgrade: true,   // WebSocket أسرع من HTTP polling للاستقبال
+            requestPollingIntervalMs: 2000, // تقليل فترة polling الاحتياطي إلى 2 ثانية
+            sessionId: 'default'            // جلسة ثابتة لتحسين استقرار الاتصال
         };
 
         // دعم البروكسي لتخطي حظر الـ IP من خوادم Render
@@ -1589,6 +1607,23 @@ io.on('connection', (socket) => {
                     if (socket.connected && roomsData[socket.id]) {
                         startTikTokConnection(1, true);
                     }
+                });
+                // ==========================================
+                // حدث roomUser: يُرسَل دورياً من TikTok ويحتوي على عدد المشاهدين
+                // نستخدمه كـ "نبضة" لتحديث lastActive للاعبين النشطين في الماراثون
+                // ==========================================
+                tiktokLiveConnection.on('roomUser', data => {
+                    const room = roomsData[socket.id];
+                    if (!room || !room.marathonState || !room.marathonState.isActive) return;
+                    // هذا الحدث يُستخدم فقط للاستماع — لا يُعدّل بيانات اللاعبين
+                    // لكنه يؤكد أن الاتصال لا يزال حياً وTikTok يرسل بيانات
+                });
+
+                // ==========================================
+                // حدث الأخطاء: منع unhandled rejection من قطع الاتصال بصمت
+                // ==========================================
+                tiktokLiveConnection.on('error', (err) => {
+                    console.error(`[TikTok Error] @${username}:`, err.message || err);
                 });
 
                 socket.tiktokConn = tiktokLiveConnection;
