@@ -833,6 +833,7 @@ function flushMarathonQueue(roomId, state) {
     const pendingMilestones = []; // تجميع إشعارات الـ milestones لإرسالها دفعة واحدة بعد المعالجة
 
     // ── 1. معالجة أحداث اللايك دفعياً ──
+    // المشكلة: تيك توك يُرسل اللايكات دفعات كبيرة متأخرة، فنوزعها على عدة ticks
     const likes = queue.likes;
     queue.likes = [];
     for (let i = 0; i < likes.length; i++) {
@@ -840,7 +841,14 @@ function flushMarathonQueue(roomId, state) {
         const player = state.players[ev.uniqueId];
         if (player) {
             player.likes += ev.likeCount;
-            player.recentLikes += ev.likeCount;
+            // لو الدفعة كبيرة جداً (>15)، نضع نصفها في carryLikes يُصرف تدريجياً
+            // هذا يمنع ظاهرة burst-then-nothing الناتجة عن تأخر تيك توك
+            const directLikes = ev.likeCount > 15 ? Math.ceil(ev.likeCount * 0.5) : ev.likeCount;
+            const carryLikes  = ev.likeCount - directLikes;
+            player.recentLikes += directLikes;
+            if (carryLikes > 0) {
+                player.carryLikes = (player.carryLikes || 0) + carryLikes;
+            }
             player.lastActive = now;
             // فحص الـ milestone
             if (player.likes >= player.nextMilestone) {
@@ -974,6 +982,7 @@ function joinMarathonPlayer(state, uniqueId, nickname, avatar) {
         comments: 0,
         gifts: 0,
         recentLikes: 0,
+        carryLikes: 0, // لايكات الدفعات الكبيرة — تُصرف تدريجياً على عدة ticks
         isFrozen: false,
         freezeUntil: 0,
         reachedMilestones: [],
@@ -1117,29 +1126,38 @@ function startMarathonLoop(roomId, socket) {
             // ── معادلة السرعة ──
             let speed = p.speed || 0;
 
-            // تباطؤ تدريجي للسرعة ~12% بالثانية (0.976^5 ≈ 0.888 بدل 0.956^5 ≈ 0.800)
-            // هذا يجعل اللاعبين مرئيين لمدة أطول رغم تأخر TikTok في إرسال الأحداث
+            // تباطؤ تدريجي للسرعة (0.976 كل 200ms ≈ 11% انخفاض بالثانية)
             speed *= 0.976;
+
+            // ── صرف carryLikes تدريجياً (لايكات الدفعات الكبيرة المؤجلة) ──
+            if (p.carryLikes > 0) {
+                // نصرف 40% من carryLikes كل tick لضمان توزيع سلس
+                const drip = Math.ceil(p.carryLikes * 0.4);
+                p.recentLikes += drip;
+                p.carryLikes = Math.floor(p.carryLikes * 0.6);
+                if (p.carryLikes < 1) p.carryLikes = 0;
+            }
 
             // ── قوة التكبيسات (recentLikes) ──
             if (p.recentLikes > 0) {
-                const startBoost = speed < 0.002 ? 0.005 : 0; // دفعة بداية خفيفة
-                const likesBoost = Math.min(0.020, p.recentLikes * 0.003);
+                const startBoost = speed < 0.003 ? 0.008 : 0; // دفعة بداية أقوى عند السكون
+                // رفع السقف من 0.020 إلى 0.035 — يعالج المشكلة الأولى:
+                // الدفعات الكبيرة من تيك توك تُحدث فرقاً فعلياً الآن
+                const likesBoost = Math.min(0.035, p.recentLikes * 0.004);
                 speed += likesBoost + startBoost;
-                // حمل 30% من recentLikes للتيك التالي — يعالج تأخر TikTok في تسليم الأحداث
-                // بدل من تصفير كامل، نحتفظ بجزء صغير يضمن استمرارية الحركة
-                p.recentLikes = Math.floor(p.recentLikes * 0.3);
+                // الاحتفاظ بـ 55% من recentLikes (بدلاً من 30%) — يعالج المشكلة الثانية:
+                // اللايكات المتأخرة من تيك توك لا تضيع بسبب الاستهلاك السريع
+                p.recentLikes = Math.floor(p.recentLikes * 0.55);
             }
 
-            // ── حد أقصى للتكبيس ──
-            if (speed > 0.024) speed = 0.024;
+            // ── حد أقصى للتكبيس (مُرفوع ليتناسب مع السقف الجديد) ──
+            if (speed > 0.038) speed = 0.038;
 
             // ── حد أدنى: منع التجمد الكامل للاعبين النشطين ──
-            // لو كان اللاعب حاصل على likes وكان نشيطاً خلال آخر 8 ثواني، نعطيه حداً أدنى
-            // هذا يعوض تأخر TikTok في إرسال أحداث بعض المشتركين
+            // لو كان اللاعب نشيطاً خلال آخر 10 ثوانٍ ولديه likes، نعطيه حداً أدنى
             if (speed < 0.0002) {
-                if (p.likes > 0 && (now - (p.lastActive || 0)) < 8000) {
-                    speed = 0.0008; // حد أدنى صغير لمنع التجمد الكامل
+                if (p.likes > 0 && (now - (p.lastActive || 0)) < 10000) {
+                    speed = 0.001; // حد أدنى أعلى قليلاً لمنع التجمد الكامل
                 } else {
                     speed = 0;
                 }
