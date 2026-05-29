@@ -854,7 +854,7 @@ function handleMarathonGift(roomId, data) {
                 const rocketId = 'rocket_' + Date.now() + '_' + Math.floor(Math.random()*1000);
                 state.rockets.push({
                     id: rocketId,
-                    progress: player.progress,
+                    progress: player.laps + player.progress, // Start from the shooter's actual position (laps + progress)
                     targetId: target.id,
                     speed: 0.15, // السرعة لكل ثانية (تمت زيادتها من 0.05)
                     spawnedBy: nickname,
@@ -876,7 +876,7 @@ function joinMarathonPlayer(state, uniqueId, nickname, avatar) {
         avatar: avatar,
         progress: 0,
         laps: 0,
-        speed: 0.012,
+        speed: 0, // تبدأ السرعة من 0 ولا يتحرك اللاعب إلا بالتكبيس
         wordBoost: 0,
         likes: 0,
         comments: 0,
@@ -888,6 +888,7 @@ function joinMarathonPlayer(state, uniqueId, nickname, avatar) {
         boostUntil: 0,
         shares: 0,
         shareBoostUsed: false,
+        hitOilSpills: [], // تتبع بقع الزيت التي اصطدم بها لتجنب تكرار الإشعار
         lastActive: Date.now()
     };
     state.players[uniqueId] = newPlayer;
@@ -1018,10 +1019,22 @@ function startMarathonLoop(roomId, socket) {
             }
 
             // فحص بقعة الزيت
-            const onOil = mState.oilSpills.some(spill => {
+            let onOil = false;
+            mState.oilSpills.forEach(spill => {
                 const diff = Math.abs((p.progress % 1) - spill.progress);
                 const circularDiff = Math.min(diff, 1 - diff);
-                return circularDiff < 0.025; // 2.5% من مسافة المضمار
+                if (circularDiff < 0.025) {
+                    onOil = true;
+                    if (!p.hitOilSpills) p.hitOilSpills = [];
+                    if (!p.hitOilSpills.includes(spill.id)) {
+                        p.hitOilSpills.push(spill.id);
+                        io.to(roomId).emit('marathon_disruption', {
+                            type: 'oil',
+                            attacker: spill.spawnedBy,
+                            victim: p.name
+                        });
+                    }
+                }
             });
             if (onOil) {
                 speed *= 0.05; // إبطاء شديد جداً بنسبة 95%
@@ -1054,12 +1067,22 @@ function startMarathonLoop(roomId, socket) {
                 rocket.expires = true;
                 targetPlayer.isFrozen = true;
                 targetPlayer.freezeUntil = now + 4000;
+                io.to(roomId).emit('marathon_disruption', {
+                    type: 'rocket',
+                    attacker: rocket.spawnedBy,
+                    victim: targetPlayer.name
+                });
             } else {
                 rocket.progress += rocket.speed;
                 if (rocket.progress >= targetTotalProgress || Math.abs(rocket.progress - targetTotalProgress) < 0.02) {
                     rocket.expires = true;
                     targetPlayer.isFrozen = true;
                     targetPlayer.freezeUntil = now + 4000; // تجميد 4 ثوانٍ
+                    io.to(roomId).emit('marathon_disruption', {
+                        type: 'rocket',
+                        attacker: rocket.spawnedBy,
+                        victim: targetPlayer.name
+                    });
                 }
             }
         });
