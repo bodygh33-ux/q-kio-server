@@ -933,6 +933,9 @@ function startMarathonLoop(roomId, socket) {
     state.isActive = true;
     state.lastWordSpawn = Date.now();
 
+    const TICK_MS = 200; // تحديث كل 200 مللي ثانية (5 مرات بالثانية) بدلاً من ثانية كاملة لسرعة الاستجابة
+    const dt = TICK_MS / 1000.0; // 0.2 ثانية
+
     const interval = setInterval(() => {
         const currentRoom = roomsData[roomId];
         if (!currentRoom || !currentRoom.marathonState || !currentRoom.marathonState.isActive) {
@@ -1001,14 +1004,14 @@ function startMarathonLoop(roomId, socket) {
             // سرعة اللاعب الحالية (تبدأ من الصفر أو السرعة السابقة مع تباطؤ)
             let speed = p.speed || 0;
 
-            // تباطؤ تدريجي للسرعة بنسبة 20% في الثانية في حال عدم التكبيس
-            speed *= 0.80;
+            // تباطؤ تدريجي للسرعة بنسبة 20% في الثانية في حال عدم التكبيس (معادلة اضمحلال أسية تناسب 0.2 ثانية)
+            speed *= 0.956; 
 
             // سرعة التكبيس (Capped at max likes speed)
             if (p.recentLikes > 0) {
                 // إذا كان اللاعب واقفاً تماماً، نعطيه دفعة انطلاق أولية لتسهيل الحركة
                 const startBoost = speed === 0 ? 0.004 : 0;
-                const likesBoost = Math.min(0.010, p.recentLikes * 0.002); // حد أقصى للتكبيس في الثانية الواحدة
+                const likesBoost = Math.min(0.010, p.recentLikes * 0.002); // حد أقصى للتكبيس في التيك الواحد
                 speed += likesBoost + startBoost;
                 p.recentLikes = 0; // استهلاك التكبيسات المستلمة
             }
@@ -1022,7 +1025,7 @@ function startMarathonLoop(roomId, socket) {
             // دفعة الكلمات (تُضاف بعد حد التكبيس الأقصى حتى تتجاوزه وتدفع اللاعب بقوة)
             if (p.wordBoost > 0) {
                 speed += p.wordBoost;
-                p.wordBoost *= 0.65; // اضمحلال سرعة الكلمة بنسبة 35% في الثانية
+                p.wordBoost *= 0.917; // اضمحلال سرعة الكلمة بالاعتماد على dt (35% بالثانية)
                 if (p.wordBoost < 0.0008) p.wordBoost = 0;
             }
 
@@ -1055,7 +1058,7 @@ function startMarathonLoop(roomId, socket) {
             }
 
             p.speed = speed;
-            p.progress += speed;
+            p.progress += speed * dt; // زيادة المسافة حسب الفرق الزمني
             if (p.progress >= 1) {
                 p.laps += Math.floor(p.progress);
                 p.progress = p.progress % 1;
@@ -1073,24 +1076,29 @@ function startMarathonLoop(roomId, socket) {
             const diff = targetTotalProgress - rocket.progress;
             if (diff <= 0) {
                 rocket.expires = true;
-                targetPlayer.isFrozen = true;
-                targetPlayer.freezeUntil = now + 4000;
-                io.to(roomId).emit('marathon_disruption', {
-                    type: 'rocket',
-                    attacker: rocket.spawnedBy,
-                    victim: targetPlayer.name
-                });
-            } else {
-                rocket.progress += rocket.speed;
-                if (rocket.progress >= targetTotalProgress || Math.abs(rocket.progress - targetTotalProgress) < 0.02) {
-                    rocket.expires = true;
+                // منع تجميد اللاعب مجدداً أو إرسال إشعار مكرر إذا كان متجمداً بالفعل
+                if (!targetPlayer.isFrozen) {
                     targetPlayer.isFrozen = true;
-                    targetPlayer.freezeUntil = now + 4000; // تجميد 4 ثوانٍ
+                    targetPlayer.freezeUntil = now + 4000;
                     io.to(roomId).emit('marathon_disruption', {
                         type: 'rocket',
                         attacker: rocket.spawnedBy,
                         victim: targetPlayer.name
                     });
+                }
+            } else {
+                rocket.progress += rocket.speed * dt; // زيادة مسافة الصاروخ حسب dt
+                if (rocket.progress >= targetTotalProgress || Math.abs(rocket.progress - targetTotalProgress) < 0.02) {
+                    rocket.expires = true;
+                    if (!targetPlayer.isFrozen) {
+                        targetPlayer.isFrozen = true;
+                        targetPlayer.freezeUntil = now + 4000; // تجميد 4 ثوانٍ
+                        io.to(roomId).emit('marathon_disruption', {
+                            type: 'rocket',
+                            attacker: rocket.spawnedBy,
+                            victim: targetPlayer.name
+                        });
+                    }
                 }
             }
         });
@@ -1136,9 +1144,8 @@ function startMarathonLoop(roomId, socket) {
             status: "active"
         });
 
-    }, 1000);
+    }, TICK_MS);
 
-    marathonLoops[roomId] = interval;
 }
 
 
