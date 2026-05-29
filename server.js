@@ -989,17 +989,26 @@ function startMarathonLoop(roomId, socket) {
                 }
             }
 
-            // السرعة الأساسية (تمت زيادتها لتكون مبهجة)
-            let speed = 0.012;
+            // سرعة اللاعب الحالية (تبدأ من الصفر أو السرعة السابقة مع تباطؤ)
+            let speed = p.speed || 0;
+
+            // تباطؤ تدريجي للسرعة بنسبة 20% في الثانية في حال عدم التكبيس
+            speed *= 0.80;
 
             // سرعة التكبيس (Capped at max likes speed)
             if (p.recentLikes > 0) {
-                const likesBoost = Math.min(0.025, p.recentLikes * 0.002);
-                speed += likesBoost;
+                // إذا كان اللاعب واقفاً تماماً، نعطيه دفعة انطلاق أولية لتسهيل الحركة
+                const startBoost = speed === 0 ? 0.005 : 0;
+                const likesBoost = Math.min(0.025, p.recentLikes * 0.0025);
+                speed += likesBoost + startBoost;
                 p.recentLikes = 0; // استهلاك التكبيسات المستلمة
-            } else {
-                speed += 0.0005; // سرعة تباطؤ تدريجية
             }
+
+            // حد أقصى للسرعة لمنع القفزات الكبيرة جداً
+            if (speed > 0.035) speed = 0.035;
+
+            // إذا أصبحت السرعة ضئيلة جداً، نوقف اللاعب تماماً
+            if (speed < 0.0002) speed = 0;
 
             // دفعة الكلمات
             if (p.wordBoost > 0) {
@@ -1015,7 +1024,7 @@ function startMarathonLoop(roomId, socket) {
                 return circularDiff < 0.025; // 2.5% من مسافة المضمار
             });
             if (onOil) {
-                speed *= 0.35; // إبطاء بنسبة 65%
+                speed *= 0.05; // إبطاء شديد جداً بنسبة 95%
             }
 
             // تفعيل مضاعفة السرعة للتكبيس
