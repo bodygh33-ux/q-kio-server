@@ -712,9 +712,9 @@ function handleMarathonChat(roomId, data) {
                 if (!alreadySolved && state.wordChallenge.slots.length < 3) {
                     let boost = 0;
                     const slotIndex = state.wordChallenge.slots.length;
-                    if (slotIndex === 0) boost = 0.04;      // أقصى دفعة سرعة
-                    else if (slotIndex === 1) boost = 0.025; // دفعة متوسطة
-                    else if (slotIndex === 2) boost = 0.015; // دفعة خفيفة
+                    if (slotIndex === 0) boost = 0.09;      // أقصى دفعة سرعة
+                    else if (slotIndex === 1) boost = 0.06; // دفعة متوسطة
+                    else if (slotIndex === 2) boost = 0.035; // دفعة خفيفة
 
                     state.wordChallenge.slots.push({
                         id: uniqueId,
@@ -887,7 +887,7 @@ function handleMarathonGift(roomId, data) {
                     id: rocketId,
                     progress: player.laps + player.progress, // Start from the shooter's actual position (laps + progress)
                     targetId: target.id,
-                    speed: 0.15, // السرعة لكل ثانية (تمت زيادتها من 0.05)
+                    speed: 0.35, // السرعة لكل ثانية (تتناسب مع السرعات الجديدة)
                     spawnedBy: nickname,
                     expires: false
                 });
@@ -1034,14 +1034,14 @@ function startMarathonLoop(roomId, socket) {
             // سرعة التكبيس (Capped at max likes speed)
             if (p.recentLikes > 0) {
                 // إذا كان اللاعب واقفاً تماماً، نعطيه دفعة انطلاق أولية لتسهيل الحركة
-                const startBoost = speed === 0 ? 0.004 : 0;
-                const likesBoost = Math.min(0.010, p.recentLikes * 0.002); // حد أقصى للتكبيس في التيك الواحد
+                const startBoost = speed === 0 ? 0.008 : 0;
+                const likesBoost = Math.min(0.020, p.recentLikes * 0.003); // حد أقصى للتكبيس في التيك الواحد
                 speed += likesBoost + startBoost;
                 p.recentLikes = 0; // استهلاك التكبيسات المستلمة
             }
 
             // حد أقصى للسرعة الناتجة عن التكبيس العادي فقط (لتكون أبطأ بشكل ملحوظ من الشير والكومنت)
-            if (speed > 0.014) speed = 0.014;
+            if (speed > 0.024) speed = 0.024;
 
             // إذا أصبحت السرعة ضئيلة جداً، نوقف اللاعب تماماً
             if (speed < 0.0002) speed = 0;
@@ -1078,7 +1078,7 @@ function startMarathonLoop(roomId, socket) {
             // تفعيل مضاعفة السرعة للتكبيس
             p.isBoosted = now < p.boostUntil;
             if (p.isBoosted) {
-                speed *= 2.0;
+                speed *= 3.5; // زيادة الـ boost للمستويات القياسية (200، 400، 800، 1600 شير/تكبيس)
             }
 
             p.speed = speed;
