@@ -1091,8 +1091,8 @@ function startMarathonLoop(roomId, socket) {
             p.isTiktokBoosted = now < (p.tiktokBoostUntil || 0);
             p.isBoosted = now < p.boostUntil;
             if (p.isTiktokBoosted) {
-                if (speed < 0.024) speed = 0.024;
-                speed *= 6.0; // البوست الأقوى على الإطلاق لهدية التيك توك (6 أضعاف السرعة!)
+                if (speed < 0.020) speed = 0.020;
+                speed *= 4.5; // البوست الأقوى على الإطلاق لهدية التيك توك (4.5 أضعاف السرعة)
             } else if (p.isBoosted) {
                 speed *= 3.5; // زيادة الـ boost للمستويات القياسية (200، 400، 800، 1600 شير/تكبيس)
             }
