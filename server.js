@@ -842,6 +842,7 @@ function handleMarathonGift(roomId, data) {
                 expiresAt: Date.now() + 6000, // 6 ثوانٍ
                 spawnedBy: nickname
             });
+            player.disruptions = (player.disruptions || 0) + 1; // زيادة عدد التخريبات
             console.log(`[Marathon Spill] Created by ${nickname} at progress ${spillPos}`);
         }
         else if (giftName.toLowerCase().includes(state.mediumGiftId.toLowerCase())) {
@@ -849,7 +850,13 @@ function handleMarathonGift(roomId, data) {
                 if (a.laps !== b.laps) return b.laps - a.laps;
                 return b.progress - a.progress;
             });
-            const target = sorted[0];
+            
+            // إذا كان مطلق الصاروخ هو نفسه الأول، يستهدف الثاني. غير ذلك يستهدف الأول.
+            let target = sorted[0];
+            if (target && target.id === uniqueId && sorted.length > 1) {
+                target = sorted[1];
+            }
+            
             if (target) {
                 const rocketId = 'rocket_' + Date.now() + '_' + Math.floor(Math.random()*1000);
                 state.rockets.push({
@@ -860,6 +867,7 @@ function handleMarathonGift(roomId, data) {
                     spawnedBy: nickname,
                     expires: false
                 });
+                player.disruptions = (player.disruptions || 0) + 1; // زيادة عدد التخريبات
                 console.log(`[Marathon Rocket] Fired by ${nickname} targeting ${target.name}`);
             }
         }
@@ -950,8 +958,8 @@ function startMarathonLoop(roomId, socket) {
             });
             const champion = sortedByDistance[0] || null;
 
-            const sortedByGifts = [...playersArr].sort((a, b) => b.gifts - a.gifts);
-            const tank = sortedByGifts[0] && sortedByGifts[0].gifts > 0 ? sortedByGifts[0] : null;
+            const sortedByDisruptions = [...playersArr].sort((a, b) => (b.disruptions || 0) - (a.disruptions || 0));
+            const tank = sortedByDisruptions[0] && (sortedByDisruptions[0].disruptions || 0) > 0 ? sortedByDisruptions[0] : null;
 
             const sortedByEngagement = [...playersArr].sort((a, b) => (b.likes + b.comments) - (a.likes + a.comments));
             const goldenRunner = sortedByEngagement[0] && (sortedByEngagement[0].likes + sortedByEngagement[0].comments > 0) ? sortedByEngagement[0] : null;
@@ -965,7 +973,7 @@ function startMarathonLoop(roomId, socket) {
                 status: "finished",
                 winners: {
                     champion: champion ? { name: champion.name, avatar: champion.avatar, laps: champion.laps } : null,
-                    tank: tank ? { name: tank.name, avatar: tank.avatar, score: tank.gifts } : null,
+                    tank: tank ? { name: tank.name, avatar: tank.avatar, score: tank.disruptions || 0 } : null,
                     goldenRunner: goldenRunner ? { name: goldenRunner.name, avatar: goldenRunner.avatar, score: goldenRunner.likes + goldenRunner.comments } : null
                 }
             });
