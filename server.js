@@ -853,6 +853,17 @@ function handleMarathonGift(roomId, data) {
     if (player) {
         player.gifts++;
         
+        // فحص تفعيل بوست هدية التيك توك (1 عملة)
+        if (giftName.toLowerCase().includes('tiktok')) {
+            player.tiktokBoostUntil = Date.now() + 6000; // 6 ثوانٍ من التوربو الفائق
+            io.to(roomId).emit('marathon_milestone', {
+                playerName: nickname,
+                isTiktokBoost: true,
+                boostDuration: 6
+            });
+            console.log(`[Marathon TikTok Boost] Triggered for ${nickname}`);
+        }
+
         if (giftName.toLowerCase().includes(state.smallGiftId.toLowerCase())) {
             const spillPos = (player.progress - 0.03 + 1) % 1;
             const spillId = 'oil_' + Date.now() + '_' + Math.floor(Math.random()*1000);
@@ -918,6 +929,7 @@ function joinMarathonPlayer(state, uniqueId, nickname, avatar) {
         freezeUntil: 0,
         reachedMilestones: [],
         boostUntil: 0,
+        tiktokBoostUntil: 0,
         shares: 0,
         shareBoostUsed: false,
         hitOilSpills: [], // تتبع بقع الزيت التي اصطدم بها لتجنب تكرار الإشعار
@@ -1075,9 +1087,13 @@ function startMarathonLoop(roomId, socket) {
                 speed *= 0.05; // إبطاء شديد جداً بنسبة 95%
             }
 
-            // تفعيل مضاعفة السرعة للتكبيس
+            // تفعيل مضاعفة السرعة للتكبيس أو تفعيل توربو التيك توك الفائق
+            p.isTiktokBoosted = now < (p.tiktokBoostUntil || 0);
             p.isBoosted = now < p.boostUntil;
-            if (p.isBoosted) {
+            if (p.isTiktokBoosted) {
+                if (speed < 0.024) speed = 0.024;
+                speed *= 6.0; // البوست الأقوى على الإطلاق لهدية التيك توك (6 أضعاف السرعة!)
+            } else if (p.isBoosted) {
                 speed *= 3.5; // زيادة الـ boost للمستويات القياسية (200، 400، 800، 1600 شير/تكبيس)
             }
 
