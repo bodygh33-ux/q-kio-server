@@ -818,6 +818,26 @@ function handleMarathonGift(roomId, data) {
     const room = roomsData[roomId];
     if (!room || !room.marathonState) return;
     const state = room.marathonState;
+
+    // تخطي الهدايا أثناء عداد الكومبو لكي لا تتكرر، وتفعيلها فقط عند اكتمال الكومبو
+    if (data.repeatEnd === false) {
+        return;
+    }
+
+    // إلغاء تكرار الهدايا عند وصول حدثين لنفس المعاملة (Combo deduplication)
+    const msgId = data.msgId;
+    if (msgId) {
+        if (!state.processedGifts) state.processedGifts = [];
+        if (state.processedGifts.includes(msgId)) {
+            console.log(`[Marathon Gift] Duplicate gift event ignored: ${msgId}`);
+            return;
+        }
+        state.processedGifts.push(msgId);
+        if (state.processedGifts.length > 500) {
+            state.processedGifts.shift();
+        }
+    }
+
     const uniqueId = data.uniqueId ? data.uniqueId.toLowerCase() : '';
     const nickname = data.nickname || data.uniqueId;
     const avatar = data.profilePictureUrl || `https://ui-avatars.com/api/?name=${encodeURIComponent(nickname)}`;
@@ -851,11 +871,15 @@ function handleMarathonGift(roomId, data) {
                 return b.progress - a.progress;
             });
             
-            // إذا كان مطلق الصاروخ هو نفسه الأول، يستهدف الثاني. غير ذلك يستهدف الأول.
-            let target = sorted[0];
-            if (target && target.id === uniqueId && sorted.length > 1) {
-                target = sorted[1];
+            // استهداف أول لاعب متصدر لا يمر بحالة تجميد حالياً (مع استثناء مطلق الصاروخ نفسه لكي لا يستهدف ذاته)
+            let candidates = sorted.filter(p => p.id !== uniqueId && !p.isFrozen);
+            
+            // إذا كان جميع الآخرين متجمدين بالفعل، نستهدف المتصدر منهم حتى لو كان متجمداً
+            if (candidates.length === 0) {
+                candidates = sorted.filter(p => p.id !== uniqueId);
             }
+            
+            let target = candidates[0] || sorted[0]; // التراجع لـ sorted[0] في حالة وجود لاعب واحد فقط في الغرفة
             
             if (target) {
                 const rocketId = 'rocket_' + Date.now() + '_' + Math.floor(Math.random()*1000);
@@ -868,7 +892,7 @@ function handleMarathonGift(roomId, data) {
                     expires: false
                 });
                 player.disruptions = (player.disruptions || 0) + 1; // زيادة عدد التخريبات
-                console.log(`[Marathon Rocket] Fired by ${nickname} targeting ${target.name}`);
+                console.log(`[Marathon Freeze] Fired by ${nickname} targeting ${target.name}`);
             }
         }
     }
