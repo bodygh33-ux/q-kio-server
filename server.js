@@ -999,19 +999,19 @@ function startMarathonLoop(roomId, socket) {
             // سرعة التكبيس (Capped at max likes speed)
             if (p.recentLikes > 0) {
                 // إذا كان اللاعب واقفاً تماماً، نعطيه دفعة انطلاق أولية لتسهيل الحركة
-                const startBoost = speed === 0 ? 0.005 : 0;
-                const likesBoost = Math.min(0.025, p.recentLikes * 0.0025);
+                const startBoost = speed === 0 ? 0.004 : 0;
+                const likesBoost = Math.min(0.010, p.recentLikes * 0.002); // حد أقصى للتكبيس في الثانية الواحدة
                 speed += likesBoost + startBoost;
                 p.recentLikes = 0; // استهلاك التكبيسات المستلمة
             }
 
-            // حد أقصى للسرعة لمنع القفزات الكبيرة جداً
-            if (speed > 0.035) speed = 0.035;
+            // حد أقصى للسرعة الناتجة عن التكبيس العادي فقط (لتكون أبطأ بشكل ملحوظ من الشير والكومنت)
+            if (speed > 0.014) speed = 0.014;
 
             // إذا أصبحت السرعة ضئيلة جداً، نوقف اللاعب تماماً
             if (speed < 0.0002) speed = 0;
 
-            // دفعة الكلمات
+            // دفعة الكلمات (تُضاف بعد حد التكبيس الأقصى حتى تتجاوزه وتدفع اللاعب بقوة)
             if (p.wordBoost > 0) {
                 speed += p.wordBoost;
                 p.wordBoost *= 0.65; // اضمحلال سرعة الكلمة بنسبة 35% في الثانية
