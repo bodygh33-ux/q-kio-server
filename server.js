@@ -1718,16 +1718,20 @@ io.on('connection', (socket) => {
 
 
     // --- منطق الألعاب العادية ---
-    socket.on('createRoom', (roomId) => {
-        // التحقق الأمني: يجب أن يكون الاتصال مصدقاً ومصنفاً كـ Host
-        if (!socket.decodedToken || (socket.decodedToken.type !== 'vip' && socket.decodedToken.type !== 'tiktok')) {
-            console.warn(`[Security Violation] createRoom rejected for socket ${socket.id} - Not authorized`);
-            socket.emit('auth_error', 'غير مصرح لك بإنشاء غرفة. يرجى تسجيل الدخول بكود تفعيل صالح.');
-            return;
+    socket.on('createRoom', (roomId, gameType) => {
+        // التحقق الأمني: يسمح للألعاب المجانية بالمرور بدون توكن
+        const isFreeGame = ['countries_war', 'fruit_war', 'flip_turn'].includes(gameType);
+        
+        if (!isFreeGame) {
+            if (!socket.decodedToken || (socket.decodedToken.type !== 'vip' && socket.decodedToken.type !== 'tiktok')) {
+                console.warn(`[Security Violation] createRoom rejected for socket ${socket.id} - Not authorized`);
+                socket.emit('auth_error', 'غير مصرح لك بإنشاء غرفة. يرجى تسجيل الدخول بكود تفعيل صالح.');
+                return;
+            }
         }
 
-        const hostClient = socket.decodedToken.client;
-        const currentDeviceId = socket.decodedToken.deviceId;
+        const hostClient = socket.decodedToken ? socket.decodedToken.client : 'free_user';
+        const currentDeviceId = socket.decodedToken ? socket.decodedToken.deviceId : 'free_device';
 
         // منع الجلسات المتزامنة: إغلاق أي غرف نشطة سابقة لنفس هذا الهوست
         for (const existingRoomId in roomsData) {
