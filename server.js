@@ -395,18 +395,19 @@ app.post('/api/user/validate-tiktok-code', async (req, res) => {
         const maxDevices = Number(data.maxDevices) || 1;
         const isRegistered = usedDevices.includes(deviceId);
 
-        // توليد توكن الجلسة الآمن
+        // توليد توكن الجلسة الآمن (يتضمن الألعاب المسموح بها)
         const token = generateSecureToken({
             type: 'tiktok',
             code: code,
             client: data.client,
+            games: data.games || [],
             deviceId: deviceId,
             expiry: new Date(data.expiryDate).getTime()
         });
 
         if (isRegistered) {
             await docRef.update({ lastLogin: new Date().toISOString() });
-            return res.json({ success: true, client: data.client, expiryDate: data.expiryDate, maxDevices: data.maxDevices, token: token });
+            return res.json({ success: true, client: data.client, games: data.games || [], expiryDate: data.expiryDate, maxDevices: data.maxDevices, token: token });
         } else {
             if (usedDevices.length >= maxDevices) {
                 return res.status(400).json({ success: false, message: `هذا الكود مستخدم بالفعل على ${usedDevices.length} من ${maxDevices} أجهزة مسموحة.` });
@@ -416,7 +417,7 @@ app.post('/api/user/validate-tiktok-code', async (req, res) => {
                     usedDevices: usedDevices,
                     lastLogin: new Date().toISOString()
                 });
-                return res.json({ success: true, client: data.client, expiryDate: data.expiryDate, maxDevices: data.maxDevices, token: token });
+                return res.json({ success: true, client: data.client, games: data.games || [], expiryDate: data.expiryDate, maxDevices: data.maxDevices, token: token });
             }
         }
     } catch (error) {
