@@ -599,6 +599,7 @@ app.get('/dashboard', (req, res) => {
                     'coordinates': 'إحداثيات 🎯',
                     'tiktok_bomb': 'تيك توك: القنبلة 💣',
                     'tiktok_roulette': 'تيك توك: الروليت والإقصاء 🎡',
+                    'tiktok_russian_roulette': 'تيك توك: الروليت الروسي 🔫',
                     'tiktok_marathon': 'تيك توك: الماراثون الجماعي 🏃‍♂️',
                     'غير معروف': 'في الانتظار ⏳'
                 };
