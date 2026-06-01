@@ -1127,38 +1127,35 @@ function startMarathonLoop(roomId, socket) {
             // ── معادلة السرعة ──
             let speed = p.speed || 0;
 
-            // تباطؤ تدريجي للسرعة (0.976 كل 200ms ≈ 11% انخفاض بالثانية)
-            speed *= 0.976;
+            // تباطؤ تدريجي للسرعة (0.93 كل 200ms)
+            speed *= 0.93;
 
             // ── صرف carryLikes تدريجياً (لايكات الدفعات الكبيرة المؤجلة) ──
             if (p.carryLikes > 0) {
-                // نصرف 40% من carryLikes كل tick لضمان توزيع سلس
-                const drip = Math.ceil(p.carryLikes * 0.4);
+                // نصرف 65% من carryLikes كل tick لضمان توزيع سلس
+                const drip = Math.ceil(p.carryLikes * 0.65);
                 p.recentLikes += drip;
-                p.carryLikes = Math.floor(p.carryLikes * 0.6);
+                p.carryLikes = Math.floor(p.carryLikes * 0.35);
                 if (p.carryLikes < 1) p.carryLikes = 0;
             }
 
             // ── قوة التكبيسات (recentLikes) ──
             if (p.recentLikes > 0) {
-                const startBoost = speed < 0.003 ? 0.008 : 0; // دفعة بداية أقوى عند السكون
-                // رفع السقف من 0.020 إلى 0.035 — يعالج المشكلة الأولى:
-                // الدفعات الكبيرة من تيك توك تُحدث فرقاً فعلياً الآن
-                const likesBoost = Math.min(0.035, p.recentLikes * 0.004);
+                const startBoost = speed < 0.003 ? 0.012 : 0; // دفعة بداية أقوى عند السكون
+                const likesBoost = Math.min(0.035, p.recentLikes * 0.006);
                 speed += likesBoost + startBoost;
-                // الاحتفاظ بـ 55% من recentLikes (بدلاً من 30%) — يعالج المشكلة الثانية:
-                // اللايكات المتأخرة من تيك توك لا تضيع بسبب الاستهلاك السريع
-                p.recentLikes = Math.floor(p.recentLikes * 0.55);
+                p.recentLikes = Math.floor(p.recentLikes * 0.7);
             }
 
             // ── حد أقصى للتكبيس (مُرفوع ليتناسب مع السقف الجديد) ──
             if (speed > 0.038) speed = 0.038;
 
             // ── حد أدنى: منع التجمد الكامل للاعبين النشطين ──
-            // لو كان اللاعب نشيطاً خلال آخر 10 ثوانٍ ولديه likes، نعطيه حداً أدنى
             if (speed < 0.0002) {
-                if (p.likes > 0 && (now - (p.lastActive || 0)) < 10000) {
-                    speed = 0.001; // حد أدنى أعلى قليلاً لمنع التجمد الكامل
+                if (p.likes > 50) {
+                    speed = 0.0015;
+                } else if (p.likes > 0) {
+                    speed = 0.0008;
                 } else {
                     speed = 0;
                 }
