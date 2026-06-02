@@ -1863,19 +1863,21 @@ io.on('connection', (socket) => {
         const firingMode = data.firingMode || 'classic';
         const chambersCount = parseInt(data.chambersCount) || 6;
         const bulletsCount = parseInt(data.bulletsCount) || 1;
-        const survivalChance = parseInt(data.survivalChance) || 50;
+
+        // Calculate base survival chance based on chambers and bullets: S = round((1 - bullets/chambers) * 100)
+        const calculatedSurvival = Math.round((1 - (bulletsCount / chambersCount)) * 100);
 
         room.rouletteState = {
             firingMode: firingMode,
             chambersCount: chambersCount,
             bulletsCount: bulletsCount,
-            survivalChance: survivalChance,
+            survivalChance: calculatedSurvival,
             cylinder: generateCylinder(chambersCount, bulletsCount),
             activeChamberIndex: 0,
             shotsTaken: 0,
             victimShots: {} // tracks consecutive shots per victimId
         };
-        console.log(`[Russian Roulette Init] Room ${socket.id} loaded in ${firingMode} mode.`);
+        console.log(`[Russian Roulette Init] Room ${socket.id} loaded in ${firingMode} mode. Calculated survival chance: ${calculatedSurvival}%.`);
     });
 
     socket.on('russian_roulette_spin', () => {
