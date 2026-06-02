@@ -1478,7 +1478,7 @@ io.on('connection', (socket) => {
                 connectionOptions.webClientOptions = {
                     httpsAgent: agent
                 };
-                connectionOptions.websocketOptions = {
+                connectionOptions.wsClientOptions = {
                     agent: agent
                 };
                 connectionOptions.requestOptions = {
