@@ -1405,6 +1405,47 @@ io.on('connection', (socket) => {
         const username = data.username ? data.username.trim().toLowerCase() : null;
         if (!username) return;
 
+        // join socket.io room for this tiktok username
+        const roomName = 'tiktok_' + username;
+        socket.join(roomName);
+
+        // Check if there is an existing room for this user to allow seamless reconnect
+        const existingRoomId = Object.keys(roomsData).find(rId => {
+            const room = roomsData[rId];
+            return room && room.isTikTok && room.tiktokUser && room.tiktokUser.trim().toLowerCase() === username;
+        });
+
+        if (existingRoomId) {
+            const oldRoom = roomsData[existingRoomId];
+            console.log(`[TikTok Reconnect] Found existing connection for @${username} (Old socket: ${existingRoomId}, New: ${socket.id})`);
+            
+            // Clear any active disconnect cleanup timer
+            if (oldRoom.cleanupTimer) {
+                clearTimeout(oldRoom.cleanupTimer);
+                oldRoom.cleanupTimer = null;
+            }
+
+            // Transfer room to new socket ID
+            roomsData[socket.id] = oldRoom;
+            if (existingRoomId !== socket.id) {
+                delete roomsData[existingRoomId];
+            }
+
+            // Update socket reference
+            socket.tiktokConn = oldRoom.tiktokConn;
+            
+            // Emit success to new socket
+            const profilePic = oldRoom.profilePic || 'https://ui-avatars.com/api/?name=' + username;
+            const nickname = oldRoom.nickname || username;
+            socket.emit('tiktok_connected', { profilePic, nickname });
+
+            // Re-send the current filter if it exists
+            if (oldRoom.chatFilter) {
+                socket.emit('syncState', oldRoom.gameState);
+            }
+            return;
+        }
+
         // كول داون 15 ثانية بين محاولات الربط لنفس الحساب (لتجنب الحظر والسبام)
         const now = Date.now();
         const lastConnect = connectionCooldowns[username];
@@ -1414,30 +1455,6 @@ io.on('connection', (socket) => {
             return;
         }
         connectionCooldowns[username] = now;
-
-        // 1. تنظيف عالمي لأي اتصال نشط سابق لنفس اسم المستخدم لمنع تضارب الجلسات
-        for (const rId in roomsData) {
-            const room = roomsData[rId];
-            if (room && room.isTikTok && room.tiktokUser && room.tiktokUser.trim().toLowerCase() === username) {
-                console.log(`[TikTok Cleanup] Found active connection for @${username} in room ${rId}. Disconnecting...`);
-                if (room.tiktokConn) {
-                    try {
-                        room.tiktokConn.disconnect();
-                    } catch (err) {
-                        console.error(`Error disconnecting old tiktokConn:`, err);
-                    }
-                }
-                io.to(rId).emit('tiktok_disconnected', 'تم تسجيل الدخول بالبث من صفحة أو لعبة أخرى.');
-                if (rId !== socket.id) {
-                    if (room.timer) clearTimeout(room.timer);
-                    delete roomsData[rId];
-                }
-            }
-        }
-
-        if (socket.tiktokConn) {
-            socket.tiktokConn.disconnect();
-        }
 
         console.log(`محاولة الاتصال ببث تيك توك: @${username}`);
 
@@ -1474,7 +1491,7 @@ io.on('connection', (socket) => {
         const startTikTokConnection = (attempt = 1, isReconnect = false) => {
             if (isReconnect) {
                 console.log(`[TikTok Reconnect] Attempt ${attempt} for @${username} (Socket: ${socket.id})`);
-                socket.emit('tiktok_reconnecting', { attempt, maxAttempts: 5 });
+                io.to(roomName).emit('tiktok_reconnecting', { attempt, maxAttempts: 5 });
             }
 
             let tiktokLiveConnection = new WebcastPushConnection(username, connectionOptions);
@@ -1488,151 +1505,140 @@ io.on('connection', (socket) => {
                     'https://ui-avatars.com/api/?name=' + username;
                 const nickname = state.roomInfo?.owner?.nickname || username;
 
-                if (isReconnect) {
-                    if (roomsData[socket.id]) {
-                        roomsData[socket.id].tiktokConn = tiktokLiveConnection;
-                    }
-                    socket.emit('tiktok_reconnected', { profilePic, nickname });
-                } else {
-                    // تسجيل الروم لأول مرة
-                    roomsData[socket.id] = {
-                        createdAt: Date.now(),
-                        gameState: { gameType: 'tiktok_bomb' },
-                        isTikTok: true,
-                        tiktokUser: username,
-                        tiktokConn: tiktokLiveConnection,
-                        timer: null,
-                        chatFilter: null
-                    };
-                    resetRoomTimer(socket.id); // بدء عداد الحذف التلقائي (30 دقيقة)
-                    broadcastDashboardUpdate();
-                    socket.emit('tiktok_connected', { profilePic, nickname });
-                }
+                roomsData[socket.id] = {
+                    createdAt: Date.now(),
+                    gameState: { gameType: 'tiktok_bomb' },
+                    isTikTok: true,
+                    tiktokUser: username,
+                    tiktokConn: tiktokLiveConnection,
+                    timer: null,
+                    chatFilter: null,
+                    profilePic: profilePic,
+                    nickname: nickname
+                };
+                resetRoomTimer(socket.id); // بدء عداد الحذف التلقائي (30 دقيقة)
+                broadcastDashboardUpdate();
+                
+                io.to(roomName).emit('tiktok_connected', { profilePic, nickname });
 
-                // تمرير أحداث تيك توك للعميل (مع حماية الفلترة)
+                // تمرير أحداث تيك توك للعميل عبر الغرفة (مع حماية الفلترة والتطبيع العربي)
                 tiktokLiveConnection.on('chat', data => {
-                    const room = roomsData[socket.id];
+                    const currentRoomId = Object.keys(roomsData).find(rId => roomsData[rId].tiktokConn === tiktokLiveConnection);
+                    if (!currentRoomId) return;
+                    const room = roomsData[currentRoomId];
                     if (!room) return;
+                    
                     if (room.gameState && room.gameState.gameType === 'tiktok_marathon') {
-                        handleMarathonChat(socket.id, data);
+                        handleMarathonChat(currentRoomId, data);
                         return;
                     }
                     if (!room.chatFilter) return; // تجاهل كل الشات إذا لم يكن هناك فلتر نشط
-                    if (room.chatFilter.type === 'exact') {
-                        const comment = data.comment.trim().toLowerCase();
-                        const targets = room.chatFilter.targets || [];
+                    
+                    const commentRaw = data.comment.trim();
+                    const commentNorm = normalizeArabicForServer(commentRaw);
 
-                        if (targets.includes(comment)) {
-                            socket.emit('tiktok_chat', data);
-                            // بمجرد إيجاد فائز، يتم مسح الفلتر فوراً لتجاهل باقي الإجابات
-                            room.chatFilter = null;
+                    if (room.chatFilter.type === 'exact') {
+                        const targets = (room.chatFilter.targets || []).map(t => normalizeArabicForServer(t));
+                        if (targets.includes(commentNorm)) {
+                            io.to(roomName).emit('tiktok_chat', data);
+                            room.chatFilter = null; // بمجرد إيجاد فائز، يتم مسح الفلتر فوراً
                         }
                     } else if (room.chatFilter.type === 'contains_any') {
-                        // فلتر القنبلة: يرسل أي تعليق يحتوي على أي كلمة مستهدفة (بدون مسح الفلتر)
-                        const comment = data.comment.trim().toLowerCase();
-                        const targets = room.chatFilter.targets || [];
-                        const matched = targets.find(t => comment.includes(t));
+                        const targets = (room.chatFilter.targets || []).map(t => normalizeArabicForServer(t));
+                        const matched = targets.find(t => commentNorm.includes(t));
                         if (matched) {
-                            socket.emit('tiktok_chat', { ...data, matchedTarget: matched });
+                            io.to(roomName).emit('tiktok_chat', { ...data, matchedTarget: matched });
                         }
                     } else if (room.chatFilter.type === 'active_players') {
                         const uniqueId = data.uniqueId ? data.uniqueId.toLowerCase() : '';
-                        const comment = data.comment.trim();
                         const playersList = (room.chatFilter.players || []).map(p => p.toLowerCase());
                         
                         if (playersList.includes(uniqueId)) {
                             if (room.chatFilter.regex) {
                                 try {
                                     const regex = new RegExp(room.chatFilter.regex, room.chatFilter.regexFlags || '');
-                                    if (regex.test(comment)) {
-                                        socket.emit('tiktok_chat', data);
+                                    if (regex.test(commentRaw) || regex.test(commentNorm)) {
+                                        io.to(roomName).emit('tiktok_chat', data);
                                     }
                                 } catch (regexErr) {
-                                    socket.emit('tiktok_chat', data);
+                                    io.to(roomName).emit('tiktok_chat', data);
                                 }
                             } else {
-                                socket.emit('tiktok_chat', data);
+                                io.to(roomName).emit('tiktok_chat', data);
                             }
                         }
                     } else if (room.chatFilter.type === 'regex') {
-                        const comment = data.comment.trim();
                         if (room.chatFilter.regex) {
                             try {
                                 const regex = new RegExp(room.chatFilter.regex, room.chatFilter.regexFlags || 'i');
-                                if (regex.test(comment)) {
-                                    socket.emit('tiktok_chat', data);
+                                if (regex.test(commentRaw) || regex.test(commentNorm)) {
+                                    io.to(roomName).emit('tiktok_chat', data);
                                 }
-                            } catch (regexErr) {
-                                // If regex compilation fails, ignore to protect server resources
-                            }
+                            } catch (regexErr) {}
                         }
                     } else if (room.chatFilter.type === 'all') {
-                        socket.emit('tiktok_chat', data);
+                        io.to(roomName).emit('tiktok_chat', data);
                     }
-                });
-                tiktokLiveConnection.on('gift', data => {
-                    const room = roomsData[socket.id];
-                    if (room && room.gameState && room.gameState.gameType === 'tiktok_marathon') {
-                        handleMarathonGift(socket.id, data);
-                        return;
-                    }
-                    socket.emit('tiktok_gift', data);
-                });
-                tiktokLiveConnection.on('like', data => {
-                    const room = roomsData[socket.id];
-                    if (room && room.gameState && room.gameState.gameType === 'tiktok_marathon') {
-                        handleMarathonLike(socket.id, data);
-                        return;
-                    }
-                    socket.emit('tiktok_like', data);
-                });
-                tiktokLiveConnection.on('share', data => {
-                    const room = roomsData[socket.id];
-                    if (room && room.gameState && room.gameState.gameType === 'tiktok_marathon') {
-                        handleMarathonShare(socket.id, data);
-                        return;
-                    }
-                    socket.emit('tiktok_share', data);
                 });
 
-                // الاستماع لإنهاء البث أو انقطاع الاتصال من خوادم تيك توك
+                tiktokLiveConnection.on('gift', data => {
+                    const currentRoomId = Object.keys(roomsData).find(rId => roomsData[rId].tiktokConn === tiktokLiveConnection);
+                    if (!currentRoomId) return;
+                    const room = roomsData[currentRoomId];
+                    if (room && room.gameState && room.gameState.gameType === 'tiktok_marathon') {
+                        handleMarathonGift(currentRoomId, data);
+                        return;
+                    }
+                    io.to(roomName).emit('tiktok_gift', data);
+                });
+
+                tiktokLiveConnection.on('like', data => {
+                    const currentRoomId = Object.keys(roomsData).find(rId => roomsData[rId].tiktokConn === tiktokLiveConnection);
+                    if (!currentRoomId) return;
+                    const room = roomsData[currentRoomId];
+                    if (room && room.gameState && room.gameState.gameType === 'tiktok_marathon') {
+                        handleMarathonLike(currentRoomId, data);
+                        return;
+                    }
+                    io.to(roomName).emit('tiktok_like', data);
+                });
+
+                tiktokLiveConnection.on('share', data => {
+                    const currentRoomId = Object.keys(roomsData).find(rId => roomsData[rId].tiktokConn === tiktokLiveConnection);
+                    if (!currentRoomId) return;
+                    const room = roomsData[currentRoomId];
+                    if (room && room.gameState && room.gameState.gameType === 'tiktok_marathon') {
+                        handleMarathonShare(currentRoomId, data);
+                        return;
+                    }
+                    io.to(roomName).emit('tiktok_share', data);
+                });
+
                 tiktokLiveConnection.on('streamEnd', (actionId) => {
                     console.log(`[TikTok StreamEnd] Stream ended for @${username}`);
-                    socket.emit('tiktok_disconnected', 'تم إنهاء البث المباشر.');
-                    if (roomsData[socket.id]) {
-                        if (roomsData[socket.id].tiktokConn) {
-                            try { roomsData[socket.id].tiktokConn.disconnect(); } catch(e){}
+                    io.to(roomName).emit('tiktok_disconnected', 'تم إنهاء البث المباشر.');
+                    const currentRoomId = Object.keys(roomsData).find(rId => roomsData[rId].tiktokConn === tiktokLiveConnection);
+                    if (currentRoomId && roomsData[currentRoomId]) {
+                        if (roomsData[currentRoomId].tiktokConn) {
+                            try { roomsData[currentRoomId].tiktokConn.disconnect(); } catch(e){}
                         }
-                        if (roomsData[socket.id].timer) clearTimeout(roomsData[socket.id].timer);
-                        delete roomsData[socket.id];
+                        if (roomsData[currentRoomId].timer) clearTimeout(roomsData[currentRoomId].timer);
+                        delete roomsData[currentRoomId];
                         broadcastDashboardUpdate();
                     }
                 });
 
                 tiktokLiveConnection.on('disconnected', () => {
                     console.log(`[TikTok Disconnected] Connection dropped for @${username}. Initiating reconnect...`);
-                    if (roomsData[socket.id] && roomsData[socket.id].tiktokConn) {
-                        try { roomsData[socket.id].tiktokConn.disconnect(); } catch(e){}
+                    const currentRoomId = Object.keys(roomsData).find(rId => roomsData[rId].tiktokConn === tiktokLiveConnection);
+                    if (currentRoomId && roomsData[currentRoomId] && roomsData[currentRoomId].tiktokConn) {
+                        try { roomsData[currentRoomId].tiktokConn.disconnect(); } catch(e){}
                     }
-                    // محاولة إعادة الاتصال فوراً
-                    if (socket.connected && roomsData[socket.id]) {
+                    if (socket.connected && currentRoomId && roomsData[currentRoomId]) {
                         startTikTokConnection(1, true);
                     }
                 });
-                // ==========================================
-                // حدث roomUser: يُرسَل دورياً من TikTok ويحتوي على عدد المشاهدين
-                // نستخدمه كـ "نبضة" لتحديث lastActive للاعبين النشطين في الماراثون
-                // ==========================================
-                tiktokLiveConnection.on('roomUser', data => {
-                    const room = roomsData[socket.id];
-                    if (!room || !room.marathonState || !room.marathonState.isActive) return;
-                    // هذا الحدث يُستخدم فقط للاستماع — لا يُعدّل بيانات اللاعبين
-                    // لكنه يؤكد أن الاتصال لا يزال حياً وTikTok يرسل بيانات
-                });
 
-                // ==========================================
-                // حدث الأخطاء: منع unhandled rejection من قطع الاتصال بصمت
-                // ==========================================
                 tiktokLiveConnection.on('error', (err) => {
                     console.error(`[TikTok Error] @${username}:`, err.message || err);
                 });
@@ -1643,19 +1649,18 @@ io.on('connection', (socket) => {
                 console.log(`❌ فشل الاتصال ببث @${username} (محاولة ${attempt}):`, err.message);
                 
                 const maxAttempts = isReconnect ? 5 : 4;
-                const canRetry = attempt < maxAttempts && socket.connected && (isReconnect ? !!roomsData[socket.id] : true);
+                const currentRoomId = Object.keys(roomsData).find(rId => roomsData[rId].tiktokUser === username);
+                const canRetry = attempt < maxAttempts && socket.connected && (isReconnect ? !!currentRoomId : true);
 
                 if (canRetry) {
-                    // الانتظار 3 ثواني قبل المحاولة القادمة (أو 5 ثواني في حالة إعادة الاتصال)
                     const delay = isReconnect ? 5000 : 3000;
                     setTimeout(() => {
-                        const stillConnected = socket.connected && (isReconnect ? !!roomsData[socket.id] : true);
+                        const stillConnected = socket.connected && (isReconnect ? !!Object.keys(roomsData).find(rId => roomsData[rId].tiktokUser === username) : true);
                         if (stillConnected) {
                             startTikTokConnection(attempt + 1, isReconnect);
                         }
                     }, delay);
                 } else {
-                    // فشل نهائي
                     const errMsg = err.message || '';
                     const isBlocked = errMsg.includes('403') || 
                                       errMsg.includes('429') || 
@@ -1673,10 +1678,11 @@ io.on('connection', (socket) => {
                     }
                     
                     if (isReconnect) {
-                        socket.emit('tiktok_disconnected', finalMsg);
-                        if (roomsData[socket.id]) {
-                            if (roomsData[socket.id].timer) clearTimeout(roomsData[socket.id].timer);
-                            delete roomsData[socket.id];
+                        io.to(roomName).emit('tiktok_disconnected', finalMsg);
+                        const currentRoomId = Object.keys(roomsData).find(rId => roomsData[rId].tiktokUser === username);
+                        if (currentRoomId && roomsData[currentRoomId]) {
+                            if (roomsData[currentRoomId].timer) clearTimeout(roomsData[currentRoomId].timer);
+                            delete roomsData[currentRoomId];
                             broadcastDashboardUpdate();
                         }
                     } else {
@@ -1773,16 +1779,34 @@ io.on('connection', (socket) => {
     });
 
     socket.on('disconnect', () => {
-        if (socket.tiktokConn) {
-            socket.tiktokConn.disconnect();
-        }
-        if (marathonLoops[socket.id]) {
-            clearInterval(marathonLoops[socket.id]);
-            delete marathonLoops[socket.id];
-        }
-        if (roomsData[socket.id]) {
-            if (roomsData[socket.id].timer) clearTimeout(roomsData[socket.id].timer);
-            delete roomsData[socket.id];
+        const room = roomsData[socket.id];
+        if (room && room.isTikTok) {
+            console.log(`[TikTok Host Disconnect] Host socket ${socket.id} disconnected. Starting 30s buffer...`);
+            // Start a 30s countdown to delete the room and connection if host doesn't reconnect
+            room.cleanupTimer = setTimeout(() => {
+                console.log(`[TikTok Host Cleanup] Room for @${room.tiktokUser} cleaned up after host disconnect.`);
+                if (room.tiktokConn) {
+                    try { room.tiktokConn.disconnect(); } catch (e) {}
+                }
+                if (marathonLoops[socket.id]) {
+                    clearInterval(marathonLoops[socket.id]);
+                    delete marathonLoops[socket.id];
+                }
+                delete roomsData[socket.id];
+                broadcastDashboardUpdate();
+            }, 30000);
+        } else {
+            if (socket.tiktokConn) {
+                socket.tiktokConn.disconnect();
+            }
+            if (marathonLoops[socket.id]) {
+                clearInterval(marathonLoops[socket.id]);
+                delete marathonLoops[socket.id];
+            }
+            if (roomsData[socket.id]) {
+                if (roomsData[socket.id].timer) clearTimeout(roomsData[socket.id].timer);
+                delete roomsData[socket.id];
+            }
         }
         setTimeout(broadcastDashboardUpdate, 1000);
     });
