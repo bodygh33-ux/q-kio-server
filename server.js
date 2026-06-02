@@ -1014,6 +1014,7 @@ function joinMarathonPlayer(state, uniqueId, nickname, avatar) {
 
 function normalizeArabicForServer(text) {
     if (!text) return '';
+    if (typeof text !== 'string') text = String(text);
     return text.normalize('NFKD')
         .replace(/[\u0300-\u036f]/g, '')
         .toLowerCase()
@@ -1523,7 +1524,7 @@ io.on('connection', (socket) => {
 
                 // تمرير أحداث تيك توك للعميل عبر الغرفة (مع حماية الفلترة والتطبيع العربي)
                 tiktokLiveConnection.on('chat', data => {
-                    const currentRoomId = Object.keys(roomsData).find(rId => roomsData[rId].tiktokConn === tiktokLiveConnection);
+                    const currentRoomId = Object.keys(roomsData).find(rId => roomsData[rId] && roomsData[rId].tiktokConn === tiktokLiveConnection);
                     if (!currentRoomId) return;
                     const room = roomsData[currentRoomId];
                     if (!room) return;
@@ -1582,7 +1583,7 @@ io.on('connection', (socket) => {
                 });
 
                 tiktokLiveConnection.on('gift', data => {
-                    const currentRoomId = Object.keys(roomsData).find(rId => roomsData[rId].tiktokConn === tiktokLiveConnection);
+                    const currentRoomId = Object.keys(roomsData).find(rId => roomsData[rId] && roomsData[rId].tiktokConn === tiktokLiveConnection);
                     if (!currentRoomId) return;
                     const room = roomsData[currentRoomId];
                     if (room && room.gameState && room.gameState.gameType === 'tiktok_marathon') {
@@ -1593,7 +1594,7 @@ io.on('connection', (socket) => {
                 });
 
                 tiktokLiveConnection.on('like', data => {
-                    const currentRoomId = Object.keys(roomsData).find(rId => roomsData[rId].tiktokConn === tiktokLiveConnection);
+                    const currentRoomId = Object.keys(roomsData).find(rId => roomsData[rId] && roomsData[rId].tiktokConn === tiktokLiveConnection);
                     if (!currentRoomId) return;
                     const room = roomsData[currentRoomId];
                     if (room && room.gameState && room.gameState.gameType === 'tiktok_marathon') {
@@ -1604,7 +1605,7 @@ io.on('connection', (socket) => {
                 });
 
                 tiktokLiveConnection.on('share', data => {
-                    const currentRoomId = Object.keys(roomsData).find(rId => roomsData[rId].tiktokConn === tiktokLiveConnection);
+                    const currentRoomId = Object.keys(roomsData).find(rId => roomsData[rId] && roomsData[rId].tiktokConn === tiktokLiveConnection);
                     if (!currentRoomId) return;
                     const room = roomsData[currentRoomId];
                     if (room && room.gameState && room.gameState.gameType === 'tiktok_marathon') {
@@ -1617,7 +1618,7 @@ io.on('connection', (socket) => {
                 tiktokLiveConnection.on('streamEnd', (actionId) => {
                     console.log(`[TikTok StreamEnd] Stream ended for @${username}`);
                     io.to(roomName).emit('tiktok_disconnected', 'تم إنهاء البث المباشر.');
-                    const currentRoomId = Object.keys(roomsData).find(rId => roomsData[rId].tiktokConn === tiktokLiveConnection);
+                    const currentRoomId = Object.keys(roomsData).find(rId => roomsData[rId] && roomsData[rId].tiktokConn === tiktokLiveConnection);
                     if (currentRoomId && roomsData[currentRoomId]) {
                         if (roomsData[currentRoomId].tiktokConn) {
                             try { roomsData[currentRoomId].tiktokConn.disconnect(); } catch(e){}
@@ -1630,7 +1631,7 @@ io.on('connection', (socket) => {
 
                 tiktokLiveConnection.on('disconnected', () => {
                     console.log(`[TikTok Disconnected] Connection dropped for @${username}. Initiating reconnect...`);
-                    const currentRoomId = Object.keys(roomsData).find(rId => roomsData[rId].tiktokConn === tiktokLiveConnection);
+                    const currentRoomId = Object.keys(roomsData).find(rId => roomsData[rId] && roomsData[rId].tiktokConn === tiktokLiveConnection);
                     if (currentRoomId && roomsData[currentRoomId] && roomsData[currentRoomId].tiktokConn) {
                         try { roomsData[currentRoomId].tiktokConn.disconnect(); } catch(e){}
                     }
