@@ -1128,8 +1128,8 @@ function startMarathonLoop(roomId, socket) {
             // ── معادلة السرعة ──
             let speed = p.speed || 0;
 
-            // تباطؤ تدريجي للسرعة (0.93 كل 200ms)
-            speed *= 0.93;
+            // تباطؤ تدريجي للسرعة (0.975 كل 200ms) - احتكاك لطيف بدلاً من الانهيار السريع
+            speed *= 0.975;
 
             // ── صرف carryLikes تدريجياً (لايكات الدفعات الكبيرة المؤجلة) ──
             if (p.carryLikes > 0) {
@@ -1151,16 +1151,8 @@ function startMarathonLoop(roomId, socket) {
             // ── حد أقصى للتكبيس (مُرفوع ليتناسب مع السقف الجديد) ──
             if (speed > 0.038) speed = 0.038;
 
-            // ── حد أدنى: منع التجمد الكامل للاعبين النشطين ──
-            if (speed < 0.0002) {
-                if (p.likes > 50) {
-                    speed = 0.0015;
-                } else if (p.likes > 0) {
-                    speed = 0.0008;
-                } else {
-                    speed = 0;
-                }
-            }
+            // إذا أصبحت السرعة متناهية الصغر يتم إيقاف المتسابق تماماً
+            if (speed < 0.0001) speed = 0;
 
             // ── دفعة تحدي الكلمة ──
             if (p.wordBoost > 0) {
@@ -1169,20 +1161,18 @@ function startMarathonLoop(roomId, socket) {
                 if (p.wordBoost < 0.0008) p.wordBoost = 0;
             }
 
-            // ── فحص بقعة الزيت (O(1) باستخدام Set بدل Array.includes) ──
-            let onOil = false;
-            if (!p.hitOilSpills || p.hitOilSpills instanceof Array) {
-                // تحويل تلقائي من Array إلى Set لتحسين الأداء
-                p.hitOilSpills = new Set(Array.isArray(p.hitOilSpills) ? p.hitOilSpills : []);
-            }
+            // ── فحص بقعة الزيت (تأثير مؤقت لثانيتين بنسبة ثابتة دون تراكم هندسي) ──
             for (let si = 0; si < mState.oilSpills.length; si++) {
                 const spill = mState.oilSpills[si];
                 const diff = Math.abs((p.progress % 1) - spill.progress);
                 const circularDiff = Math.min(diff, 1 - diff);
                 if (circularDiff < 0.025) {
-                    onOil = true;
+                    if (!p.hitOilSpills || p.hitOilSpills instanceof Array) {
+                        p.hitOilSpills = new Set(Array.isArray(p.hitOilSpills) ? p.hitOilSpills : []);
+                    }
                     if (!p.hitOilSpills.has(spill.id)) {
                         p.hitOilSpills.add(spill.id);
+                        p.oilSlowdownUntil = now + 2000; // تباطؤ لثانيتين
                         io.to(roomId).emit('marathon_disruption', {
                             type: 'oil',
                             attacker: spill.spawnedBy,
@@ -1190,9 +1180,6 @@ function startMarathonLoop(roomId, socket) {
                         });
                     }
                 }
-            }
-            if (onOil) {
-                speed *= 0.05;
             }
 
             // ── مضاعفات السرعة ──
@@ -1202,7 +1189,14 @@ function startMarathonLoop(roomId, socket) {
                 if (speed < 0.020) speed = 0.020;
                 speed *= 4.5;
             } else if (p.isBoosted) {
+                if (speed < 0.008) speed = 0.008; // سرعة بدء تشغيل دنيا للمسرعين حتى لا يضربوا في صفر
                 speed *= 3.5;
+            }
+
+            // تطبيق تأثير تباطؤ الزيت المؤقت في نهاية الحساب
+            const hasOilSlowdown = p.oilSlowdownUntil && now < p.oilSlowdownUntil;
+            if (hasOilSlowdown) {
+                speed *= 0.1; // تباطؤ بنسبة 90%
             }
 
             p.speed = speed;
