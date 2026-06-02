@@ -1463,9 +1463,16 @@ io.on('connection', (socket) => {
             processInitialData: false,      // لا نعالج البيانات الأولية لتوفير الموارد
             enableExtendedGiftInfo: true,   // معلومات الهدايا الكاملة (مهم للماراثون)
             enableWebsocketUpgrade: true,   // WebSocket أسرع من HTTP polling للاستقبال
-            requestPollingIntervalMs: 2000, // تقليل فترة polling الاحتياطي إلى 2 ثانية
-            sessionId: 'default'            // جلسة ثابتة لتحسين استقرار الاتصال
+            requestPollingIntervalMs: 2000  // تقليل فترة polling الاحتياطي إلى 2 ثانية
         };
+
+        // إذا كان هناك SESSIONID ممرر من البيئة (لتجنب حظر الـ IP) نقوم بإضافته
+        if (process.env.TIKTOK_SESSION_ID && process.env.TIKTOK_SESSION_ID !== 'default') {
+            connectionOptions.sessionId = process.env.TIKTOK_SESSION_ID.trim();
+            if (process.env.TIKTOK_TARGET_IDC) {
+                connectionOptions.ttTargetIdc = process.env.TIKTOK_TARGET_IDC.trim();
+            }
+        }
 
         // دعم البروكسي لتخطي حظر الـ IP من خوادم Render
         const proxyUrl = process.env.TIKTOK_PROXY_URL;
@@ -1848,7 +1855,107 @@ io.on('connection', (socket) => {
         }
     });
 
+    // --- Russian Roulette Socket Event Handlers ---
+    socket.on('russian_roulette_init', (data) => {
+        const room = roomsData[socket.id];
+        if (!room) return;
+
+        const firingMode = data.firingMode || 'classic';
+        const chambersCount = parseInt(data.chambersCount) || 6;
+        const bulletsCount = parseInt(data.bulletsCount) || 1;
+        const survivalChance = parseInt(data.survivalChance) || 50;
+
+        room.rouletteState = {
+            firingMode: firingMode,
+            chambersCount: chambersCount,
+            bulletsCount: bulletsCount,
+            survivalChance: survivalChance,
+            cylinder: generateCylinder(chambersCount, bulletsCount),
+            activeChamberIndex: 0,
+            shotsTaken: 0,
+            victimShots: {} // tracks consecutive shots per victimId
+        };
+        console.log(`[Russian Roulette Init] Room ${socket.id} loaded in ${firingMode} mode.`);
+    });
+
+    socket.on('russian_roulette_spin', () => {
+        const room = roomsData[socket.id];
+        if (!room || !room.rouletteState) return;
+
+        const state = room.rouletteState;
+        const total = state.firingMode === 'percentage' ? 6 : state.chambersCount;
+        state.activeChamberIndex = Math.floor(Math.random() * total);
+        
+        socket.emit('russian_roulette_spin_result', {
+            activeChamberIndex: state.activeChamberIndex
+        });
+        console.log(`[Russian Roulette Spin] Room ${socket.id} spun to chamber ${state.activeChamberIndex}.`);
+    });
+
+    socket.on('russian_roulette_pull_trigger', (data) => {
+        const room = roomsData[socket.id];
+        if (!room || !room.rouletteState) return;
+
+        const state = room.rouletteState;
+        const victimId = data.victimId;
+        if (!victimId) return;
+
+        let isBullet = false;
+        let shots = state.victimShots[victimId] || 0;
+
+        if (state.firingMode === 'classic') {
+            isBullet = state.cylinder[state.activeChamberIndex];
+            state.activeChamberIndex = (state.activeChamberIndex + 1) % state.chambersCount;
+        } else {
+            // Percentage mode: dynamic probability drop
+            // Survival chance decreases by 15% on each consecutive shot
+            const currentSurvival = Math.max(5, state.survivalChance - (shots * 15));
+            const roll = Math.random() * 100;
+            isBullet = roll > currentSurvival;
+        }
+
+        // Increment consecutive shots taken by this victim
+        state.victimShots[victimId] = shots + 1;
+        state.shotsTaken++;
+
+        // Calculate the survival chance for the NEXT shot if they survive
+        const nextShots = state.victimShots[victimId];
+        const nextSurvivalChance = Math.max(5, state.survivalChance - (nextShots * 15));
+
+        if (isBullet) {
+            // Reset state on hit (death)
+            state.victimShots[victimId] = 0;
+            state.shotsTaken = 0;
+            if (state.firingMode === 'classic') {
+                state.cylinder = generateCylinder(state.chambersCount, state.bulletsCount);
+                state.activeChamberIndex = 0;
+            }
+        }
+
+        socket.emit('russian_roulette_trigger_result', {
+            isBullet: isBullet,
+            activeChamberIndex: state.activeChamberIndex,
+            shotsTaken: state.victimShots[victimId], // this is the updated count
+            nextSurvivalChance: nextSurvivalChance
+        });
+
+        console.log(`[Russian Roulette Trigger] Room ${socket.id} pulled trigger. Victim ${victimId} shots: ${state.victimShots[victimId]}. Hit: ${isBullet}.`);
+    });
+
 });
+
+function generateCylinder(chambers, bullets) {
+    const cylinder = new Array(chambers).fill(false);
+    let bulletsPlaced = 0;
+    while (bulletsPlaced < bullets) {
+        const randIndex = Math.floor(Math.random() * chambers);
+        if (!cylinder[randIndex]) {
+            cylinder[randIndex] = true;
+            bulletsPlaced++;
+        }
+    }
+    return cylinder;
+}
 
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
