@@ -1506,17 +1506,23 @@ io.on('connection', (socket) => {
                     'https://ui-avatars.com/api/?name=' + username;
                 const nickname = state.roomInfo?.owner?.nickname || username;
 
-                roomsData[socket.id] = {
-                    createdAt: Date.now(),
-                    gameState: { gameType: 'tiktok_bomb' },
-                    isTikTok: true,
-                    tiktokUser: username,
-                    tiktokConn: tiktokLiveConnection,
-                    timer: null,
-                    chatFilter: null,
-                    profilePic: profilePic,
-                    nickname: nickname
-                };
+                if (roomsData[socket.id]) {
+                    roomsData[socket.id].tiktokConn = tiktokLiveConnection;
+                    roomsData[socket.id].profilePic = profilePic;
+                    roomsData[socket.id].nickname = nickname;
+                } else {
+                    roomsData[socket.id] = {
+                        createdAt: Date.now(),
+                        gameState: { gameType: 'tiktok_bomb' },
+                        isTikTok: true,
+                        tiktokUser: username,
+                        tiktokConn: tiktokLiveConnection,
+                        timer: null,
+                        chatFilter: null,
+                        profilePic: profilePic,
+                        nickname: nickname
+                    };
+                }
                 resetRoomTimer(socket.id); // بدء عداد الحذف التلقائي (30 دقيقة)
                 broadcastDashboardUpdate();
                 
