@@ -1045,10 +1045,11 @@ function startMarathonLoop(roomId, socket) {
     else { marathonQueues[roomId].likes = []; marathonQueues[roomId].chats = []; marathonQueues[roomId].shares = []; marathonQueues[roomId].gifts = []; }
 
     const interval = setInterval(() => {
-        const currentRoom = roomsData[roomId];
+        const currentRoom = Object.values(roomsData).find(r => r === room);
         if (!currentRoom || !currentRoom.marathonState || !currentRoom.marathonState.isActive) {
             clearInterval(interval);
-            delete marathonLoops[roomId];
+            const activeKey = Object.keys(marathonLoops).find(k => marathonLoops[k] === interval);
+            if (activeKey) delete marathonLoops[activeKey];
             return;
         }
 
@@ -1087,7 +1088,7 @@ function startMarathonLoop(roomId, socket) {
                 speed: p.speed
             }));
 
-            socket.emit('marathon_tick', {
+            io.to('tiktok_' + room.tiktokUser).emit('marathon_tick', {
                 players: finalPlayers,
                 oilSpills: mState.oilSpills,
                 rockets: mState.rockets,
@@ -1274,7 +1275,7 @@ function startMarathonLoop(roomId, socket) {
             }
         }
 
-        socket.emit('marathon_tick', {
+        io.to('tiktok_' + room.tiktokUser).emit('marathon_tick', {
             players: Object.values(mState.players).map(p => ({
                 id: p.id,
                 name: p.name,
@@ -1430,6 +1431,10 @@ io.on('connection', (socket) => {
             roomsData[socket.id] = oldRoom;
             if (existingRoomId !== socket.id) {
                 delete roomsData[existingRoomId];
+                if (marathonLoops[existingRoomId]) {
+                    marathonLoops[socket.id] = marathonLoops[existingRoomId];
+                    delete marathonLoops[existingRoomId];
+                }
             }
 
             // Update socket reference
@@ -1795,8 +1800,8 @@ io.on('connection', (socket) => {
     socket.on('disconnect', () => {
         const room = roomsData[socket.id];
         if (room && room.isTikTok) {
-            console.log(`[TikTok Host Disconnect] Host socket ${socket.id} disconnected. Starting 30s buffer...`);
-            // Start a 30s countdown to delete the room and connection if host doesn't reconnect
+            console.log(`[TikTok Host Disconnect] Host socket ${socket.id} disconnected. Starting 180s buffer...`);
+            // Start a 180s countdown to delete the room and connection if host doesn't reconnect
             room.cleanupTimer = setTimeout(() => {
                 console.log(`[TikTok Host Cleanup] Room for @${room.tiktokUser} cleaned up after host disconnect.`);
                 if (room.tiktokConn) {
@@ -1808,7 +1813,7 @@ io.on('connection', (socket) => {
                 }
                 delete roomsData[socket.id];
                 broadcastDashboardUpdate();
-            }, 30000);
+            }, 180000);
         } else {
             if (socket.tiktokConn) {
                 socket.tiktokConn.disconnect();
