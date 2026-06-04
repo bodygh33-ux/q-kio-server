@@ -1395,6 +1395,33 @@ io.on('connection', (socket) => {
         }
     });
 
+// دوال مساعدة لتحديد نوع اللعبة من الرابط أو المعرف لتسهيل إعادة التهيئة عند الانتقال بين الألعاب
+function getGameTypeFromReferer(referer) {
+    if (!referer) return 'tiktok_bomb';
+    const lower = referer.toLowerCase();
+    if (lower.includes('marathon.html')) return 'tiktok_marathon';
+    if (lower.includes('tiktok-russian-roulette.html')) return 'tiktok_russian_roulette';
+    if (lower.includes('tiktok-roulette.html')) return 'tiktok_roulette';
+    if (lower.includes('tiktok-bomb.html')) return 'tiktok_bomb';
+    if (lower.includes('kharabisha.html')) return 'kharabisha';
+    if (lower.includes('numble.html')) return 'numble';
+    if (lower.includes('hexagon-maze.html')) return 'hexagon-maze';
+    return 'tiktok_bomb';
+}
+
+function getGameTypeFromId(gameId) {
+    if (!gameId) return 'tiktok_bomb';
+    const id = gameId.toLowerCase();
+    if (id === 'marathon' || id === 'tiktok_marathon') return 'tiktok_marathon';
+    if (id === 'tiktok-russian-roulette' || id === 'tiktok_russian_roulette') return 'tiktok_russian_roulette';
+    if (id === 'tiktok-roulette' || id === 'tiktok_roulette') return 'tiktok_roulette';
+    if (id === 'tiktok-bomb' || id === 'tiktok_bomb') return 'tiktok_bomb';
+    if (id === 'kharabisha') return 'kharabisha';
+    if (id === 'numble') return 'numble';
+    if (id === 'hexagon-maze') return 'hexagon-maze';
+    return id;
+}
+
     // --- منطق ألعاب تيك توك اللحظية ---
     socket.on('tiktok_connect', (data) => {
         // التحقق الأمني: يجب أن يكون السوكت مصدقاً كـ Host من نوع tiktok
@@ -1406,6 +1433,10 @@ io.on('connection', (socket) => {
 
         const username = data.username ? data.username.trim().toLowerCase() : null;
         if (!username) return;
+
+        // تحديد اللعبة المستهدفة عند الربط
+        const targetGameType = getGameTypeFromId(data.gameId || getGameTypeFromReferer(socket.handshake.headers.referer));
+        console.log(`[TikTok Connect] Host @${username} wants game type: ${targetGameType}`);
 
         // join socket.io room for this tiktok username
         const roomName = 'tiktok_' + username;
@@ -1429,12 +1460,35 @@ io.on('connection', (socket) => {
 
             // Transfer room to new socket ID
             roomsData[socket.id] = oldRoom;
+            roomsData[socket.id].hostSocketId = socket.id; // تحديث معرف سوكت الهوست لتجنب التحذيرات الأمنية
+            
             if (existingRoomId !== socket.id) {
                 delete roomsData[existingRoomId];
                 if (marathonLoops[existingRoomId]) {
                     marathonLoops[socket.id] = marathonLoops[existingRoomId];
                     delete marathonLoops[existingRoomId];
                 }
+            }
+
+            // تحقق مما إذا كان المستخدم قد قام بتغيير اللعبة (مثلاً انتقل من الماراثون إلى القنبلة)
+            const oldGameType = oldRoom.gameState?.gameType;
+            if (oldGameType !== targetGameType) {
+                console.log(`[TikTok Game Switch] Host switched from ${oldGameType} to ${targetGameType}. Resetting game state...`);
+                
+                // إيقاف أي حلقات سباق أو مؤقتات نشطة للعبة القديمة
+                if (marathonLoops[socket.id]) {
+                    clearInterval(marathonLoops[socket.id]);
+                    delete marathonLoops[socket.id];
+                }
+                delete marathonQueues[socket.id];
+                
+                // إعادة تعيين حالة اللعبة والفلتر لتناسب اللعبة الجديدة
+                oldRoom.gameState = { gameType: targetGameType };
+                oldRoom.chatFilter = null;
+                
+                // حذف الحالات الخاصة بالألعاب الأخرى
+                delete oldRoom.marathonState;
+                delete oldRoom.rouletteState;
             }
 
             // Update socket reference
@@ -1522,17 +1576,19 @@ io.on('connection', (socket) => {
                     roomsData[socket.id].tiktokConn = tiktokLiveConnection;
                     roomsData[socket.id].profilePic = profilePic;
                     roomsData[socket.id].nickname = nickname;
+                    roomsData[socket.id].hostSocketId = socket.id; // تعيين معرف سوكت الهوست لتجنب التحذيرات الأمنية
                 } else {
                     roomsData[socket.id] = {
                         createdAt: Date.now(),
-                        gameState: { gameType: 'tiktok_bomb' },
+                        gameState: { gameType: targetGameType },
                         isTikTok: true,
                         tiktokUser: username,
                         tiktokConn: tiktokLiveConnection,
                         timer: null,
                         chatFilter: null,
                         profilePic: profilePic,
-                        nickname: nickname
+                        nickname: nickname,
+                        hostSocketId: socket.id // تعيين معرف سوكت الهوست لتجنب التحذيرات الأمنية
                     };
                 }
                 resetRoomTimer(socket.id); // بدء عداد الحذف التلقائي (30 دقيقة)
@@ -1782,6 +1838,19 @@ io.on('connection', (socket) => {
                 hostClient: hostClient,
                 deviceId: currentDeviceId
             };
+        } else {
+            // تحديث سوكت الهوست عند إعادة إنشاء نفس الغرفة (مثلاً بعد إعادة تحميل الصفحة أو إعادة الاتصال)
+            // للتأكد من حماية الغرفة، نتحقق أن المنشئ الجديد هو نفس العميل أو نفس الجهاز
+            if (roomsData[roomId].hostClient === hostClient || roomsData[roomId].deviceId === currentDeviceId || isFreeGame) {
+                console.log(`[Room Re-created] Updating hostSocketId for room ${roomId} to new socket ${socket.id}`);
+                roomsData[roomId].hostSocketId = socket.id;
+                roomsData[roomId].hostClient = hostClient;
+                roomsData[roomId].deviceId = currentDeviceId;
+            } else {
+                console.warn(`[Security Violation] Unauthorized attempt to recreate room ${roomId} by client ${hostClient}`);
+                socket.emit('auth_error', 'كود الغرفة هذا مستخدم بالفعل من قبل مستخدم آخر.');
+                return;
+            }
         }
         resetRoomTimer(roomId);
         broadcastDashboardUpdate();
