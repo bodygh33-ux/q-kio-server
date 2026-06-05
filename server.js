@@ -1974,7 +1974,7 @@ function getGameTypeFromId(gameId) {
         if (!room || !room.rouletteState) return;
 
         const state = room.rouletteState;
-        const total = state.firingMode === 'percentage' ? 6 : state.chambersCount;
+        const total = state.chambersCount;
         state.activeChamberIndex = Math.floor(Math.random() * total);
         
         socket.emit('russian_roulette_spin_result', {
@@ -2013,6 +2013,8 @@ function getGameTypeFromId(gameId) {
         const nextShots = state.victimShots[victimId];
         const nextSurvivalChance = Math.max(5, state.survivalChance - (nextShots * 15));
 
+        const finalShotsTaken = state.victimShots[victimId];
+
         if (isBullet) {
             // Reset state on hit (death)
             state.victimShots[victimId] = 0;
@@ -2026,7 +2028,7 @@ function getGameTypeFromId(gameId) {
         socket.emit('russian_roulette_trigger_result', {
             isBullet: isBullet,
             activeChamberIndex: state.activeChamberIndex,
-            shotsTaken: state.victimShots[victimId], // this is the updated count
+            shotsTaken: finalShotsTaken, // this is the correct non-reset count
             nextSurvivalChance: nextSurvivalChance
         });
 
