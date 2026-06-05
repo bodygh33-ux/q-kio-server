@@ -709,6 +709,12 @@ const MARATHON_WORDS = [
 // --- دوال الإضافة للقائمة (خفيفة جداً - O(1) فقط) ---
 // هذه الدوال لا تعالج الأحداث — تضيفها فقط للقائمة لتُعالَج في الـ tick
 
+function checkMarathonJoinPermission(state, data) {
+    if (state.joinPermission !== 'followers') return true;
+    const isFollower = data.followRole === 1 || data.followRole === 2 || (data.followInfo && (data.followInfo.followStatus === 1 || data.followInfo.followStatus === 2));
+    return !!isFollower;
+}
+
 function handleMarathonChat(roomId, data) {
     const room = roomsData[roomId];
     if (!room || !room.marathonState) return;
@@ -723,6 +729,7 @@ function handleMarathonChat(roomId, data) {
             const commentNorm = normalizeArabicForServer(comment);
             const entryNorm = normalizeArabicForServer(state.entryValue);
             if (commentNorm.includes(entryNorm) || comment.toLowerCase().includes(state.entryValue.toLowerCase())) {
+                if (!checkMarathonJoinPermission(state, data)) return;
                 joinMarathonPlayer(state, uniqueId, nickname, avatar);
             }
         }
@@ -747,6 +754,7 @@ function handleMarathonLike(roomId, data) {
             const uniqueId = data.uniqueId ? data.uniqueId.toLowerCase() : '';
             const nickname = data.nickname || data.uniqueId;
             const avatar = data.profilePictureUrl || `https://ui-avatars.com/api/?name=${encodeURIComponent(nickname)}`;
+            if (!checkMarathonJoinPermission(state, data)) return;
             joinMarathonPlayer(state, uniqueId, nickname, avatar);
         }
         return;
@@ -756,7 +764,9 @@ function handleMarathonLike(roomId, data) {
         uniqueId: data.uniqueId ? data.uniqueId.toLowerCase() : '',
         nickname: data.nickname || data.uniqueId,
         avatar: data.profilePictureUrl || `https://ui-avatars.com/api/?name=${encodeURIComponent(data.nickname || data.uniqueId)}`,
-        likeCount: data.likeCount || 1
+        likeCount: data.likeCount || 1,
+        followRole: data.followRole,
+        followInfo: data.followInfo
     });
 }
 
@@ -770,6 +780,7 @@ function handleMarathonShare(roomId, data) {
             const uniqueId = data.uniqueId ? data.uniqueId.toLowerCase() : '';
             const nickname = data.nickname || data.uniqueId;
             const avatar = data.profilePictureUrl || `https://ui-avatars.com/api/?name=${encodeURIComponent(nickname)}`;
+            if (!checkMarathonJoinPermission(state, data)) return;
             joinMarathonPlayer(state, uniqueId, nickname, avatar);
         }
         return;
@@ -809,6 +820,7 @@ function handleMarathonGift(roomId, data) {
             const uniqueId = data.uniqueId ? data.uniqueId.toLowerCase() : '';
             const nickname = data.nickname || data.uniqueId;
             const avatar = data.profilePictureUrl || `https://ui-avatars.com/api/?name=${encodeURIComponent(nickname)}`;
+            if (!checkMarathonJoinPermission(state, data)) return;
             joinMarathonPlayer(state, uniqueId, nickname, avatar);
         }
         return;
@@ -861,10 +873,12 @@ function flushMarathonQueue(roomId, state) {
             }
         } else if (state.entryType === 'likes' || state.entryType === 'all') {
             if (state.playerCount < state.maxPlayers) {
-                const newPlayer = joinMarathonPlayer(state, ev.uniqueId, ev.nickname, ev.avatar);
-                if (newPlayer) {
-                    newPlayer.likes += ev.likeCount;
-                    newPlayer.recentLikes += ev.likeCount;
+                if (checkMarathonJoinPermission(state, ev)) {
+                    const newPlayer = joinMarathonPlayer(state, ev.uniqueId, ev.nickname, ev.avatar);
+                    if (newPlayer) {
+                        newPlayer.likes += ev.likeCount;
+                        newPlayer.recentLikes += ev.likeCount;
+                    }
                 }
             }
         }
@@ -1338,7 +1352,8 @@ io.on('connection', (socket) => {
                 mediumGiftId: configOptions.mediumGiftId || 'Crown',
                 entryType: configOptions.entryType || 'likes',
                 entryValue: configOptions.entryValue || '',
-                lastWordSpawn: 0
+                lastWordSpawn: 0,
+                joinPermission: configOptions.joinPermission || 'all'
             };
             console.log(`[Marathon Setup] Completed for room ${socket.id}`);
             socket.emit('marathon_setup_success');
