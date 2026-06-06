@@ -601,6 +601,7 @@ app.get('/dashboard', (req, res) => {
                     'tiktok_roulette': 'تيك توك: الروليت والإقصاء 🎡',
                     'tiktok_russian_roulette': 'تيك توك: الروليت الروسي 🔫',
                     'tiktok_marathon': 'تيك توك: الماراثون الجماعي 🏃‍♂️',
+                    'tiktok_rockets': 'تيك توك: حرب الصواريخ 🚀',
                     'غير معروف': 'في الانتظار ⏳'
                 };
                 
@@ -1418,6 +1419,7 @@ function getGameTypeFromReferer(referer) {
     if (lower.includes('tiktok-russian-roulette.html')) return 'tiktok_russian_roulette';
     if (lower.includes('tiktok-roulette.html')) return 'tiktok_roulette';
     if (lower.includes('tiktok-bomb.html')) return 'tiktok_bomb';
+    if (lower.includes('tiktok-missiles.html') || lower.includes('missiles.html') || lower.includes('rockets.html')) return 'tiktok_rockets';
     if (lower.includes('kharabisha.html')) return 'kharabisha';
     if (lower.includes('numble.html')) return 'numble';
     if (lower.includes('hexagon-maze.html')) return 'hexagon-maze';
@@ -1431,6 +1433,7 @@ function getGameTypeFromId(gameId) {
     if (id === 'tiktok-russian-roulette' || id === 'tiktok_russian_roulette') return 'tiktok_russian_roulette';
     if (id === 'tiktok-roulette' || id === 'tiktok_roulette') return 'tiktok_roulette';
     if (id === 'tiktok-bomb' || id === 'tiktok_bomb') return 'tiktok_bomb';
+    if (id === 'rockets' || id === 'tiktok_rockets' || id === 'tiktok-missiles' || id === 'tiktok-rockets') return 'tiktok_rockets';
     if (id === 'kharabisha') return 'kharabisha';
     if (id === 'numble') return 'numble';
     if (id === 'hexagon-maze') return 'hexagon-maze';
