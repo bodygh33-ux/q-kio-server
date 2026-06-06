@@ -1944,6 +1944,82 @@ function getGameTypeFromId(gameId) {
         }
     });
 
+    // ============================================================
+    //   نظام تتبع أسئلة الألعاب (Game Question Tracking)
+    //   يحفظ الأسئلة/الأرقام المستخدمة per tiktokUser على السيرفر
+    //   data.gameKey: 'trivia' | 'bomb' | 'hexagon'
+    // ============================================================
+
+    // [1] تسجيل عناصر مستخدمة
+    socket.on('game_track_used', (data) => {
+        const room = roomsData[socket.id];
+        if (!room) return;
+        const key = data.gameKey || 'trivia';
+        if (!room.usedItems) room.usedItems = {};
+        if (!room.usedItems[key]) room.usedItems[key] = new Set();
+        if (Array.isArray(data.items)) {
+            data.items.forEach(item => room.usedItems[key].add(String(item)));
+        }
+    });
+
+    // [2] طلب العناصر المستخدمة
+    socket.on('game_get_used', (data) => {
+        const room = roomsData[socket.id];
+        const key = (data && data.gameKey) || 'trivia';
+        const usedSet = (room && room.usedItems && room.usedItems[key]) ? room.usedItems[key] : new Set();
+        socket.emit('game_used_response', { gameKey: key, items: Array.from(usedSet) });
+        if (room) {
+            console.log(`[Game Tracking] Sent ${usedSet.size} used items for game=${key}, room=${socket.id}`);
+        }
+    });
+
+    // [3] إعادة تعيين قائمة لعبة معينة
+    socket.on('game_reset_used', (data) => {
+        const room = roomsData[socket.id];
+        if (!room) return;
+        const key = (data && data.gameKey) || 'trivia';
+        if (!room.usedItems) room.usedItems = {};
+        room.usedItems[key] = new Set();
+        console.log(`[Game Tracking] Reset used items for game=${key}, room=${socket.id}`);
+    });
+
+    // [4] إزالة عناصر مستخدمة معينة
+    socket.on('game_untrack_used', (data) => {
+        const room = roomsData[socket.id];
+        if (!room) return;
+        const key = data.gameKey || 'trivia';
+        if (room.usedItems && room.usedItems[key] && Array.isArray(data.items)) {
+            data.items.forEach(item => room.usedItems[key].delete(String(item)));
+            console.log(`[Game Tracking] Removed ${data.items.length} items from game=${key}, room=${socket.id}`);
+        }
+    });
+
+    // متوافق مع النظام القديم (trivia-survival.html مازال يستخدم الأحداث القديمة)
+    socket.on('trivia_track_questions', (data) => {
+        const room = roomsData[socket.id];
+        if (!room) return;
+        if (!room.usedItems) room.usedItems = {};
+        if (!room.usedItems['trivia']) room.usedItems['trivia'] = new Set();
+        if (Array.isArray(data.questions)) {
+            data.questions.forEach(q => room.usedItems['trivia'].add(String(q)));
+        }
+    });
+
+    socket.on('trivia_get_used_questions', () => {
+        const room = roomsData[socket.id];
+        const usedSet = (room && room.usedItems && room.usedItems['trivia']) ? room.usedItems['trivia'] : new Set();
+        socket.emit('trivia_used_questions_response', { questions: Array.from(usedSet) });
+        console.log(`[Trivia Tracking Legacy] Sent ${usedSet.size} used questions for room ${socket.id}`);
+    });
+
+    socket.on('trivia_reset_questions', () => {
+        const room = roomsData[socket.id];
+        if (!room) return;
+        if (!room.usedItems) room.usedItems = {};
+        room.usedItems['trivia'] = new Set();
+        console.log(`[Trivia Tracking Legacy] Reset for room ${socket.id}`);
+    });
+
     // --- Russian Roulette Socket Event Handlers ---
     socket.on('russian_roulette_init', (data) => {
         const room = roomsData[socket.id];
