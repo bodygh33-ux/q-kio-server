@@ -1963,8 +1963,7 @@ function getGameTypeFromId(gameId) {
             survivalChance: calculatedSurvival,
             cylinder: generateCylinder(chambersCount, bulletsCount),
             activeChamberIndex: 0,
-            shotsTaken: 0,
-            victimShots: {} // tracks consecutive shots per victimId
+            shotsTaken: 0
         };
         console.log(`[Russian Roulette Init] Room ${socket.id} loaded in ${firingMode} mode. Calculated survival chance: ${calculatedSurvival}%.`);
     });
@@ -1992,7 +1991,7 @@ function getGameTypeFromId(gameId) {
         if (!victimId) return;
 
         let isBullet = false;
-        let shots = state.victimShots[victimId] || 0;
+        let shots = state.shotsTaken || 0;
 
         if (state.firingMode === 'classic') {
             isBullet = state.cylinder[state.activeChamberIndex];
@@ -2005,19 +2004,14 @@ function getGameTypeFromId(gameId) {
             isBullet = roll > currentSurvival;
         }
 
-        // Increment consecutive shots taken by this victim
-        state.victimShots[victimId] = shots + 1;
-        state.shotsTaken++;
+        // Increment consecutive shots taken
+        state.shotsTaken = shots + 1;
 
         // Calculate the survival chance for the NEXT shot if they survive
-        const nextShots = state.victimShots[victimId];
-        const nextSurvivalChance = Math.max(5, state.survivalChance - (nextShots * 15));
-
-        const finalShotsTaken = state.victimShots[victimId];
+        const nextSurvivalChance = Math.max(5, state.survivalChance - (state.shotsTaken * 15));
 
         if (isBullet) {
             // Reset state on hit (death)
-            state.victimShots[victimId] = 0;
             state.shotsTaken = 0;
             if (state.firingMode === 'classic') {
                 state.cylinder = generateCylinder(state.chambersCount, state.bulletsCount);
@@ -2028,11 +2022,11 @@ function getGameTypeFromId(gameId) {
         socket.emit('russian_roulette_trigger_result', {
             isBullet: isBullet,
             activeChamberIndex: state.activeChamberIndex,
-            shotsTaken: finalShotsTaken, // this is the correct non-reset count
+            shotsTaken: state.shotsTaken, // this is the correct non-reset count
             nextSurvivalChance: nextSurvivalChance
         });
 
-        console.log(`[Russian Roulette Trigger] Room ${socket.id} pulled trigger. Victim ${victimId} shots: ${state.victimShots[victimId]}. Hit: ${isBullet}.`);
+        console.log(`[Russian Roulette Trigger] Room ${socket.id} pulled trigger. Victim ${victimId} shots: ${state.shotsTaken}. Hit: ${isBullet}.`);
     });
 
 });
