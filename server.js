@@ -1812,7 +1812,7 @@ function getGameTypeFromId(gameId) {
     // --- منطق الألعاب العادية ---
     socket.on('createRoom', (roomId, gameType) => {
         // التحقق الأمني: يسمح للألعاب المجانية بالمرور بدون توكن
-        const isFreeGame = ['countries_war', 'fruit_war', 'flip_turn'].includes(gameType);
+        const isFreeGame = ['countries_war', 'fruit_war', 'flip_turn', 'memory'].includes(gameType);
         
         if (!isFreeGame) {
             if (!socket.decodedToken || (socket.decodedToken.type !== 'vip' && socket.decodedToken.type !== 'tiktok')) {
