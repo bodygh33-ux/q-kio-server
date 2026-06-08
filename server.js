@@ -1759,9 +1759,7 @@ function getGameTypeFromId(gameId) {
                                       errMsg.includes('429') || 
                                       errMsg.toLowerCase().includes('forbidden') || 
                                       errMsg.toLowerCase().includes('too many requests') ||
-                                      errMsg.toLowerCase().includes('ip') ||
-                                      errMsg.toLowerCase().includes('rate limit') ||
-                                      errMsg.toLowerCase().includes('status code');
+                                      errMsg.toLowerCase().includes('rate limit');
                     
                     let finalMsg = 'هذا الحساب ليس في بث مباشر حالياً، أو اليوزر خطأ.';
                     if (isBlocked) {
