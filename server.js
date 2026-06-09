@@ -1049,9 +1049,35 @@ function normalizeArabicForServer(text) {
         .toLowerCase()
         .replace(/[أإآ]/g, 'ا')
         .replace(/ة/g, 'ه')
-        .replace(/[yيى]/g, 'ي')
+        .replace(/[y|ي|ى]/g, 'ي')
         .replace(/[^\w\s\u0600-\u06FF]/gi, '')
         .trim();
+}
+
+function flattenTikTokData(data) {
+    if (!data) return data;
+    const userObj = data.user || data.sender || data.userDetails;
+    if (userObj) {
+        if (!data.uniqueId && userObj.uniqueId) data.uniqueId = userObj.uniqueId;
+        if (!data.nickname && userObj.nickname) data.nickname = userObj.nickname;
+        if (userObj.followRole !== undefined && data.followRole === undefined) data.followRole = userObj.followRole;
+        if (userObj.followInfo && !data.followInfo) data.followInfo = userObj.followInfo;
+        if (!data.profilePictureUrl) {
+            const avatar = userObj.avatarThumb || userObj.avatar_thumb || userObj.avatarMedium || userObj.avatar_medium || userObj.avatarLarge || userObj.avatar_large;
+            if (avatar) {
+                const urls = avatar.urlList || avatar.url_list;
+                if (Array.isArray(urls) && urls.length > 0) {
+                    data.profilePictureUrl = urls[0];
+                }
+            }
+        }
+    }
+    if (!data.uniqueId) data.uniqueId = '';
+    if (!data.nickname) data.nickname = data.uniqueId || 'مستخدم';
+    if (!data.profilePictureUrl) {
+        data.profilePictureUrl = `https://ui-avatars.com/api/?name=${encodeURIComponent(data.nickname)}&background=random`;
+    }
+    return data;
 }
 
 function startMarathonLoop(roomId, socket) {
@@ -1639,6 +1665,7 @@ function getGameTypeFromId(gameId) {
 
                 // تمرير أحداث تيك توك للعميل عبر الغرفة (مع حماية الفلترة والتطبيع العربي)
                 tiktokLiveConnection.on('chat', data => {
+                    data = flattenTikTokData(data);
                     const currentRoomId = Object.keys(roomsData).find(rId => roomsData[rId] && roomsData[rId].tiktokConn === tiktokLiveConnection);
                     if (!currentRoomId) return;
                     const room = roomsData[currentRoomId];
@@ -1698,6 +1725,7 @@ function getGameTypeFromId(gameId) {
                 });
 
                 tiktokLiveConnection.on('gift', data => {
+                    data = flattenTikTokData(data);
                     const currentRoomId = Object.keys(roomsData).find(rId => roomsData[rId] && roomsData[rId].tiktokConn === tiktokLiveConnection);
                     if (!currentRoomId) return;
                     const room = roomsData[currentRoomId];
@@ -1709,6 +1737,7 @@ function getGameTypeFromId(gameId) {
                 });
 
                 tiktokLiveConnection.on('like', data => {
+                    data = flattenTikTokData(data);
                     const currentRoomId = Object.keys(roomsData).find(rId => roomsData[rId] && roomsData[rId].tiktokConn === tiktokLiveConnection);
                     if (!currentRoomId) return;
                     const room = roomsData[currentRoomId];
@@ -1720,6 +1749,7 @@ function getGameTypeFromId(gameId) {
                 });
 
                 tiktokLiveConnection.on('share', data => {
+                    data = flattenTikTokData(data);
                     const currentRoomId = Object.keys(roomsData).find(rId => roomsData[rId] && roomsData[rId].tiktokConn === tiktokLiveConnection);
                     if (!currentRoomId) return;
                     const room = roomsData[currentRoomId];
