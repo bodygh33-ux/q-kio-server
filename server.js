@@ -712,7 +712,7 @@ const MARATHON_WORDS = [
 
 function checkMarathonJoinPermission(state, data) {
     if (state.joinPermission !== 'followers') return true;
-    const isFollower = data.followRole === 1 || data.followRole === 2 || (data.followInfo && (data.followInfo.followStatus === 1 || data.followInfo.followStatus === 2));
+    const isFollower = data.followRole == 1 || data.followRole == 2 || (data.followInfo && (data.followInfo.followStatus == 1 || data.followInfo.followStatus == 2));
     return !!isFollower;
 }
 
