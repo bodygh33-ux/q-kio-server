@@ -64,9 +64,12 @@ try {
     if (process.env.TIKTOK_SIGN_API_KEY) {
         SignConfig.apiKey = process.env.TIKTOK_SIGN_API_KEY.trim();
     }
-    // إزالة السلاش الإضافي دائماً لتجنب خطأ //webcast/fetch
-    SignConfig.basePath = (process.env.TIKTOK_SIGN_HOST || (process.env.TIKTOK_SIGN_API_KEY ? 'https://tiktok.eulerstream.com' : 'https://tiktok-sign.zerody.one')).replace(/\/+$/, '');
-    console.log(`[TikTok SignConfig] Configured. BasePath: ${SignConfig.basePath}`);
+    // لا نضع رابط افتراضي للسيرفر حتى تستخدم المكتبة الإعدادات الداخلية المحدثة الخاصة بها
+    // نضع الرابط فقط إذا كان محدد في البيئة
+    if (process.env.TIKTOK_SIGN_HOST) {
+        SignConfig.basePath = process.env.TIKTOK_SIGN_HOST.trim().replace(/\/+$/, '');
+        console.log(`[TikTok SignConfig] Configured custom BasePath: ${SignConfig.basePath}`);
+    }
 } catch (e) {
     console.error(`[TikTok SignConfig] Error setting SignConfig:`, e.message);
 }
@@ -1550,14 +1553,17 @@ function getGameTypeFromId(gameId) {
         const connectionOptions = {
             processInitialData: false,      // لا نعالج البيانات الأولية لتوفير الموارد
             enableExtendedGiftInfo: true,   // معلومات الهدايا الكاملة (مهم للماراثون)
-            enableWebsocketUpgrade: true,   // WebSocket أسرع من HTTP polling للاستقبال
             requestPollingIntervalMs: 2000, // تقليل فترة polling الاحتياطي إلى 2 ثانية
-            signApiKey: process.env.TIKTOK_SIGN_API_KEY ? process.env.TIKTOK_SIGN_API_KEY.trim() : undefined,
-            signProviderOptions: {
-                host: (process.env.TIKTOK_SIGN_HOST || (process.env.TIKTOK_SIGN_API_KEY ? 'https://tiktok.eulerstream.com' : 'https://tiktok-sign.zerody.one')).replace(/\/+$/, ''),
-                params: process.env.TIKTOK_SIGN_API_KEY ? { apiKey: process.env.TIKTOK_SIGN_API_KEY.trim() } : {}
-            }
+            signApiKey: process.env.TIKTOK_SIGN_API_KEY ? process.env.TIKTOK_SIGN_API_KEY.trim() : undefined
         };
+
+        // إضافة إعدادات السيرفر المخصص فقط إذا تم تحديدها في البيئة (لتجنب فرض سيرفر قديم معطل)
+        if (process.env.TIKTOK_SIGN_HOST) {
+            connectionOptions.signProviderOptions = {
+                host: process.env.TIKTOK_SIGN_HOST.trim().replace(/\/+$/, ''),
+                params: process.env.TIKTOK_SIGN_API_KEY ? { apiKey: process.env.TIKTOK_SIGN_API_KEY.trim() } : {}
+            };
+        }
 
         // إذا كان هناك SESSIONID ممرر من البيئة (لتجنب حظر الـ IP) نقوم بإضافته
         if (process.env.TIKTOK_SESSION_ID && process.env.TIKTOK_SESSION_ID !== 'default') {
