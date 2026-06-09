@@ -475,23 +475,22 @@ io.use((socket, next) => {
     const token = socket.handshake.auth?.token;
     const isHost = socket.handshake.auth?.isHost;
 
-    if (isHost) {
-        if (!token) {
-            console.warn(`[Socket Auth] Rejected - Host socket missing token (Socket ID: ${socket.id})`);
-            return next(new Error('Authentication error: Missing token for Host connection'));
-        }
+    if (token) {
         const payload = verifySecureToken(token);
         if (!payload) {
             console.warn(`[Socket Auth] Rejected - Host socket invalid token signature (Socket ID: ${socket.id})`);
-            return next(new Error('Authentication error: Invalid token signature'));
-        }
-        if (Date.now() > payload.expiry) {
+            if (isHost) return next(new Error('Authentication error: Invalid token signature'));
+        } else if (Date.now() > payload.expiry) {
             console.warn(`[Socket Auth] Rejected - Host socket token expired (Socket ID: ${socket.id})`);
-            return next(new Error('Authentication error: Token expired'));
+            if (isHost) return next(new Error('Authentication error: Token expired'));
+        } else {
+            // حفظ بيانات الجلسة المصدقة في السوكت
+            socket.decodedToken = payload;
+            console.log(`[Socket Auth] Approved connection with token - Client: ${payload.client}, Type: ${payload.type} (Socket ID: ${socket.id})`);
         }
-        // حفظ بيانات الجلسة المصدقة في السوكت
-        socket.decodedToken = payload;
-        console.log(`[Socket Auth] Approved Host connection - Client: ${payload.client}, Type: ${payload.type}`);
+    } else if (isHost) {
+        console.warn(`[Socket Auth] Rejected - Host socket missing token (Socket ID: ${socket.id})`);
+        return next(new Error('Authentication error: Missing token for Host connection'));
     }
     next();
 });
@@ -1813,8 +1812,12 @@ function getGameTypeFromId(gameId) {
 
     // --- منطق الألعاب العادية ---
     socket.on('createRoom', (roomId, gameType) => {
+        const existingRoom = roomsData[roomId];
+        const originalGameType = existingRoom && existingRoom.gameState ? (existingRoom.gameState.gameType || existingRoom.gameState.type) : null;
+        const resolvedGameType = gameType || originalGameType;
+
         // التحقق الأمني: يسمح للألعاب المجانية بالمرور بدون توكن
-        const isFreeGame = ['countries_war', 'fruit_war', 'flip_turn', 'memory'].includes(gameType);
+        const isFreeGame = ['countries_war', 'fruit_war', 'flip_turn', 'memory'].includes(resolvedGameType);
         
         if (!isFreeGame) {
             if (!socket.decodedToken || (socket.decodedToken.type !== 'vip' && socket.decodedToken.type !== 'tiktok')) {
@@ -1829,30 +1832,30 @@ function getGameTypeFromId(gameId) {
 
         // منع الجلسات المتزامنة: إغلاق أي غرف نشطة سابقة لنفس هذا الهوست
         for (const existingRoomId in roomsData) {
-            const existingRoom = roomsData[existingRoomId];
-            if (existingRoom && existingRoom.hostClient === hostClient && existingRoomId !== roomId) {
+            const room = roomsData[existingRoomId];
+            if (room && room.hostClient === hostClient && existingRoomId !== roomId) {
                 console.log(`[Concurrent Session] Closing old room ${existingRoomId} for host ${hostClient}`);
                 io.to(existingRoomId).emit('roomClosed', 'تم إغلاق الغرفة لفتحها من جهاز أو متصفح آخر.');
                 // إجبار كل السوكتس في الغرفة على مغادرتها
                 io.in(existingRoomId).socketsLeave(existingRoomId);
                 // تنظيف اتصال تيك توك لو كان موجود
-                if (existingRoom.tiktokConn) {
-                    existingRoom.tiktokConn.disconnect();
+                if (room.tiktokConn) {
+                    room.tiktokConn.disconnect();
                 }
                 if (marathonLoops[existingRoomId]) {
                     clearInterval(marathonLoops[existingRoomId]);
                     delete marathonLoops[existingRoomId];
                 }
-                clearTimeout(existingRoom.timer);
+                clearTimeout(room.timer);
                 delete roomsData[existingRoomId];
             }
         }
 
         socket.join(roomId);
-        if (!roomsData[roomId]) {
+        if (!existingRoom) {
             roomsData[roomId] = {
                 createdAt: Date.now(),
-                gameState: {},
+                gameState: { gameType: resolvedGameType },
                 timer: null,
                 hostSocketId: socket.id, // تسجيل معرف سوكت الهوست للتحقق اللاحق
                 hostClient: hostClient,
@@ -1861,11 +1864,24 @@ function getGameTypeFromId(gameId) {
         } else {
             // تحديث سوكت الهوست عند إعادة إنشاء نفس الغرفة (مثلاً بعد إعادة تحميل الصفحة أو إعادة الاتصال)
             // للتأكد من حماية الغرفة، نتحقق أن المنشئ الجديد هو نفس العميل أو نفس الجهاز
-            if (roomsData[roomId].hostClient === hostClient || roomsData[roomId].deviceId === currentDeviceId || isFreeGame) {
+            const oldHostClient = existingRoom.hostClient;
+            const oldDeviceId = existingRoom.deviceId;
+
+            const isAuthorizedRecreate = isFreeGame || 
+                !oldHostClient || 
+                oldHostClient === 'free_user' || 
+                oldHostClient === hostClient || 
+                (oldDeviceId && oldDeviceId === currentDeviceId);
+
+            if (isAuthorizedRecreate) {
                 console.log(`[Room Re-created] Updating hostSocketId for room ${roomId} to new socket ${socket.id}`);
-                roomsData[roomId].hostSocketId = socket.id;
-                roomsData[roomId].hostClient = hostClient;
-                roomsData[roomId].deviceId = currentDeviceId;
+                existingRoom.hostSocketId = socket.id;
+                existingRoom.hostClient = hostClient;
+                existingRoom.deviceId = currentDeviceId;
+                if (resolvedGameType && (!existingRoom.gameState || !existingRoom.gameState.gameType)) {
+                    if (!existingRoom.gameState) existingRoom.gameState = {};
+                    existingRoom.gameState.gameType = resolvedGameType;
+                }
             } else {
                 console.warn(`[Security Violation] Unauthorized attempt to recreate room ${roomId} by client ${hostClient}`);
                 socket.emit('auth_error', 'كود الغرفة هذا مستخدم بالفعل من قبل مستخدم آخر.');
