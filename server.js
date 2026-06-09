@@ -1063,6 +1063,9 @@ function flattenTikTokData(data) {
         if (userObj.followRole !== undefined && data.followRole === undefined) data.followRole = userObj.followRole;
         if (userObj.followInfo && !data.followInfo) data.followInfo = userObj.followInfo;
         if (!data.profilePictureUrl) {
+            data.profilePictureUrl = userObj.profilePictureUrl || userObj.profilePic || userObj.avatar;
+        }
+        if (!data.profilePictureUrl) {
             const avatar = userObj.avatarThumb || userObj.avatar_thumb || userObj.avatarMedium || userObj.avatar_medium || userObj.avatarLarge || userObj.avatar_large;
             if (avatar) {
                 const urls = avatar.urlList || avatar.url_list;
