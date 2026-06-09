@@ -1540,7 +1540,11 @@ function getGameTypeFromId(gameId) {
             processInitialData: false,      // لا نعالج البيانات الأولية لتوفير الموارد
             enableExtendedGiftInfo: true,   // معلومات الهدايا الكاملة (مهم للماراثون)
             enableWebsocketUpgrade: true,   // WebSocket أسرع من HTTP polling للاستقبال
-            requestPollingIntervalMs: 2000  // تقليل فترة polling الاحتياطي إلى 2 ثانية
+            requestPollingIntervalMs: 2000, // تقليل فترة polling الاحتياطي إلى 2 ثانية
+            signProviderOptions: {
+                host: process.env.TIKTOK_SIGN_HOST || 'https://tiktok-sign.zerody.one/',
+                params: process.env.TIKTOK_SIGN_API_KEY ? { apiKey: process.env.TIKTOK_SIGN_API_KEY } : {}
+            }
         };
 
         // إذا كان هناك SESSIONID ممرر من البيئة (لتجنب حظر الـ IP) نقوم بإضافته
