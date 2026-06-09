@@ -3,7 +3,7 @@ const http = require('http');
 const cors = require('cors');
 const admin = require('firebase-admin');
 const { Server } = require('socket.io');
-const { WebcastPushConnection } = require('tiktok-live-connector'); // إضافة مكتبة تيك توك
+const { WebcastPushConnection, SignConfig } = require('tiktok-live-connector'); // إضافة مكتبة تيك توك
 
 const app = express();
 app.use(cors());
@@ -58,6 +58,17 @@ if (serviceAccount) {
 }
 
 const db = serviceAccount ? admin.firestore() : null;
+
+// تهيئة خادم توقيع اتصال التيك توك EulerStream
+if (process.env.TIKTOK_SIGN_API_KEY) {
+    try {
+        SignConfig.apiKey = process.env.TIKTOK_SIGN_API_KEY.trim();
+        SignConfig.basePath = process.env.TIKTOK_SIGN_HOST ? process.env.TIKTOK_SIGN_HOST.trim() : 'https://tiktok.eulerstream.com';
+        console.log(`[TikTok SignConfig] EulerStream configured with API Key. BasePath: ${SignConfig.basePath}`);
+    } catch (e) {
+        console.error(`[TikTok SignConfig] Error setting SignConfig:`, e.message);
+    }
+}
 
 // ===== [SECURITY] التوقيع الرقمي وإدارة الجلسات الآمنة =====
 const crypto = require('crypto');
@@ -1540,6 +1551,7 @@ function getGameTypeFromId(gameId) {
             enableExtendedGiftInfo: true,   // معلومات الهدايا الكاملة (مهم للماراثون)
             enableWebsocketUpgrade: true,   // WebSocket أسرع من HTTP polling للاستقبال
             requestPollingIntervalMs: 2000, // تقليل فترة polling الاحتياطي إلى 2 ثانية
+            signApiKey: process.env.TIKTOK_SIGN_API_KEY ? process.env.TIKTOK_SIGN_API_KEY.trim() : undefined,
             signProviderOptions: {
                 host: process.env.TIKTOK_SIGN_HOST || (process.env.TIKTOK_SIGN_API_KEY ? 'https://tiktok.eulerstream.com/' : 'https://tiktok-sign.zerody.one/'),
                 params: process.env.TIKTOK_SIGN_API_KEY ? { apiKey: process.env.TIKTOK_SIGN_API_KEY.trim() } : {}
