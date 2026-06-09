@@ -1553,7 +1553,7 @@ function getGameTypeFromId(gameId) {
             requestPollingIntervalMs: 2000, // تقليل فترة polling الاحتياطي إلى 2 ثانية
             signApiKey: process.env.TIKTOK_SIGN_API_KEY ? process.env.TIKTOK_SIGN_API_KEY.trim() : undefined,
             signProviderOptions: {
-                host: process.env.TIKTOK_SIGN_HOST || (process.env.TIKTOK_SIGN_API_KEY ? 'https://tiktok.eulerstream.com/' : 'https://tiktok-sign.zerody.one/'),
+                host: (process.env.TIKTOK_SIGN_HOST || (process.env.TIKTOK_SIGN_API_KEY ? 'https://tiktok.eulerstream.com' : 'https://tiktok-sign.zerody.one')).replace(/\/+$/, ''),
                 params: process.env.TIKTOK_SIGN_API_KEY ? { apiKey: process.env.TIKTOK_SIGN_API_KEY.trim() } : {}
             }
         };
