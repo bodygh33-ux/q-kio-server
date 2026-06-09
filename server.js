@@ -63,7 +63,7 @@ const db = serviceAccount ? admin.firestore() : null;
 if (process.env.TIKTOK_SIGN_API_KEY) {
     try {
         SignConfig.apiKey = process.env.TIKTOK_SIGN_API_KEY.trim();
-        SignConfig.basePath = process.env.TIKTOK_SIGN_HOST ? process.env.TIKTOK_SIGN_HOST.trim() : 'https://tiktok.eulerstream.com';
+        SignConfig.basePath = (process.env.TIKTOK_SIGN_HOST ? process.env.TIKTOK_SIGN_HOST.trim() : 'https://tiktok.eulerstream.com').replace(/\/+$/, '');
         console.log(`[TikTok SignConfig] EulerStream configured with API Key. BasePath: ${SignConfig.basePath}`);
     } catch (e) {
         console.error(`[TikTok SignConfig] Error setting SignConfig:`, e.message);
