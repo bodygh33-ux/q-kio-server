@@ -103,7 +103,70 @@ function verifySecureToken(token) {
 
 // Removed verifySocketAuth definition as requested.
 
+// --- Image Proxy لصور التيك توك (تجاوز قيود CORS) ---
+app.get('/api/proxy-image', async (req, res) => {
+    const url = req.query.url;
+    if (!url) return res.status(400).send('Missing url parameter');
+
+    // السماح فقط بصور من نطاقات التيك توك المعروفة
+    const allowedDomains = [
+        'p16-sign.tiktokcdn.com',
+        'p19-sign.tiktokcdn.com',
+        'p77-sign.tiktokcdn.com',
+        'p19-amd-ov.tiktokcdn.com',
+        'p16-amd-ov.tiktokcdn.com',
+        'p77-amd-ov.tiktokcdn.com',
+        'p16-pu.tiktokcdn.com',
+        'p19-pu.tiktokcdn.com',
+        'ui-avatars.com'
+    ];
+
+    let hostname;
+    try {
+        hostname = new URL(url).hostname;
+    } catch(e) {
+        return res.status(400).send('Invalid URL');
+    }
+
+    if (!allowedDomains.some(d => hostname.endsWith(d))) {
+        return res.status(403).send('Domain not allowed');
+    }
+
+    try {
+        const https = require('https');
+        const http2 = require('http');
+        const protocol = url.startsWith('https') ? https : http2;
+
+        const request = protocol.get(url, {
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Referer': 'https://www.tiktok.com/',
+                'Accept': 'image/avif,image/webp,image/apng,image/*,*/*;q=0.8',
+            },
+            timeout: 8000
+        }, (imgRes) => {
+            res.set('Access-Control-Allow-Origin', '*');
+            res.set('Cache-Control', 'public, max-age=86400');
+            res.set('Content-Type', imgRes.headers['content-type'] || 'image/jpeg');
+            imgRes.pipe(res);
+        });
+
+        request.on('error', (err) => {
+            console.warn('[ImageProxy] Error fetching:', url, err.message);
+            if (!res.headersSent) res.status(502).send('Proxy error');
+        });
+
+        request.on('timeout', () => {
+            request.destroy();
+            if (!res.headersSent) res.status(504).send('Proxy timeout');
+        });
+    } catch(err) {
+        if (!res.headersSent) res.status(500).send('Internal error');
+    }
+});
+
 // --- APIs للتحكم بالأكواد وإدارة الجلسات ---
+
 
 // 1. جلب الأكواد للمدير
 app.get('/api/admin/codes', (req, res, next) => {
@@ -1054,33 +1117,129 @@ function normalizeArabicForServer(text) {
         .trim();
 }
 
-function flattenTikTokData(data) {
-    if (!data) return data;
-    const userObj = data.user || data.sender || data.userDetails;
-    if (userObj) {
-        if (!data.uniqueId && userObj.uniqueId) data.uniqueId = userObj.uniqueId;
-        if (!data.nickname && userObj.nickname) data.nickname = userObj.nickname;
-        if (userObj.followRole !== undefined && data.followRole === undefined) data.followRole = userObj.followRole;
-        if (userObj.followInfo && !data.followInfo) data.followInfo = userObj.followInfo;
-        if (!data.profilePictureUrl) {
-            data.profilePictureUrl = userObj.profilePictureUrl || userObj.profilePic || userObj.avatar;
-        }
-        if (!data.profilePictureUrl) {
-            const avatar = userObj.avatarThumb || userObj.avatar_thumb || userObj.avatarMedium || userObj.avatar_medium || userObj.avatarLarge || userObj.avatar_large;
-            if (avatar) {
-                const urls = avatar.urlList || avatar.url_list;
-                if (Array.isArray(urls) && urls.length > 0) {
-                    data.profilePictureUrl = urls[0];
+// عداد للـ debug logging
+let _debugLogCount = 0;
+
+// استخراج كل الـ properties من object بما فيها prototype ones بشكل متداخل ودعم الـ getters في الـ ES6 classes
+function deepExtractObject(obj, visited = new Set()) {
+    if (!obj || typeof obj !== 'object') return obj;
+    if (visited.has(obj)) return null;
+
+    if (Array.isArray(obj)) {
+        visited.add(obj);
+        const res = obj.map(item => deepExtractObject(item, visited));
+        visited.delete(obj);
+        return res;
+    }
+
+    visited.add(obj);
+    const result = {};
+    let currentProto = obj;
+    while (currentProto && currentProto !== Object.prototype) {
+        const props = Object.getOwnPropertyNames(currentProto);
+        for (const prop of props) {
+            if (prop === 'constructor') continue;
+            if (Object.prototype.hasOwnProperty.call(result, prop)) continue;
+            try {
+                const val = obj[prop];
+                if (typeof val !== 'function') {
+                    result[prop] = deepExtractObject(val, visited);
                 }
+            } catch(e) {
+                // تجاهل الخصائص التي تسبب خطأ عند الوصول إليها
             }
         }
+        currentProto = Object.getPrototypeOf(currentProto);
     }
-    if (!data.uniqueId) data.uniqueId = '';
-    if (!data.nickname) data.nickname = data.uniqueId || 'مستخدم';
-    if (!data.profilePictureUrl) {
-        data.profilePictureUrl = `https://ui-avatars.com/api/?name=${encodeURIComponent(data.nickname)}&background=random`;
+    visited.delete(obj);
+    return result;
+}
+
+
+// استخراج URL الصورة من أي شكل ممكن
+function extractAvatarUrl(avatarField) {
+    if (!avatarField) return null;
+    if (typeof avatarField === 'string' && avatarField.startsWith('http')) return avatarField;
+    if (typeof avatarField === 'object') {
+        const urls = avatarField.urlList || avatarField.url_list || avatarField.urls;
+        if (Array.isArray(urls) && urls.length > 0) return urls[0];
+        if (typeof avatarField.url === 'string') return avatarField.url;
     }
-    return data;
+    return null;
+}
+
+function flattenTikTokData(data) {
+    if (!data) return data;
+
+    // DEBUG: طباعة هيكل البيانات الأول 5 مرات لمعرفة الشكل الحقيقي
+    if (_debugLogCount < 5) {
+        _debugLogCount++;
+        try {
+            // استخدام for...in لرؤية كل الـ properties بما فيها prototype
+            const allKeys = [];
+            for (const k in data) allKeys.push(k);
+            console.log(`[DEBUG flattenTikTokData #${_debugLogCount}] constructor: ${data.constructor?.name}, all keys (for..in):`, allKeys);
+            console.log(`[DEBUG] uniqueId=${data.uniqueId}, nickname=${data.nickname}, profilePictureUrl=${data.profilePictureUrl}`);
+            if (data.user) console.log(`[DEBUG] data.user:`, JSON.stringify(deepExtractObject(data.user)).substring(0, 300));
+            if (data.sender) console.log(`[DEBUG] data.sender:`, JSON.stringify(deepExtractObject(data.sender)).substring(0, 300));
+            if (data.author) console.log(`[DEBUG] data.author:`, JSON.stringify(deepExtractObject(data.author)).substring(0, 300));
+            const avatarCandidates = {};
+            for (const k of ['avatarThumb','avatar_thumb','avatarMedium','avatar','profilePic','profilePictureUrl','avatarUrl','picture']) {
+                if (data[k] !== undefined) avatarCandidates[k] = data[k];
+            }
+            if (Object.keys(avatarCandidates).length > 0) console.log(`[DEBUG] avatar candidates on root:`, JSON.stringify(avatarCandidates).substring(0, 400));
+        } catch(e) { console.log('[DEBUG] could not stringify:', e.message); }
+    }
+
+    // تسطيح البيانات باستخدام deepExtractObject لالتقاط prototype properties أيضاً
+    const plainData = deepExtractObject(data);
+
+    // استخراج معلومات المستخدم من أي حقل ممكن
+    const rawUser = plainData.user || plainData.sender || plainData.userDetails || plainData.author;
+    const userObj = rawUser ? deepExtractObject(rawUser) : {};
+
+    if (Object.keys(userObj).length > 0) {
+        if (!plainData.uniqueId && userObj.uniqueId) plainData.uniqueId = userObj.uniqueId;
+        if (!plainData.nickname && userObj.nickname) plainData.nickname = userObj.nickname;
+        if (userObj.followRole !== undefined && plainData.followRole === undefined) plainData.followRole = userObj.followRole;
+        if (userObj.followInfo && !plainData.followInfo) plainData.followInfo = userObj.followInfo;
+
+        // استخراج صورة الملف الشخصي من userObj بكل الصيغ الممكنة
+        if (!plainData.profilePictureUrl) {
+            plainData.profilePictureUrl =
+                extractAvatarUrl(userObj.profilePictureUrl) ||
+                extractAvatarUrl(userObj.profilePic) ||
+                extractAvatarUrl(userObj.avatar) ||
+                extractAvatarUrl(userObj.avatarThumb) ||
+                extractAvatarUrl(userObj.avatar_thumb) ||
+                extractAvatarUrl(userObj.avatarMedium) ||
+                extractAvatarUrl(userObj.avatar_medium) ||
+                extractAvatarUrl(userObj.avatarLarge) ||
+                extractAvatarUrl(userObj.avatar_large) ||
+                extractAvatarUrl(userObj.avatarUrl) ||
+                null;
+        }
+    }
+
+    // بحث مباشر في plainData عن حقول الصورة الممكنة
+    if (!plainData.profilePictureUrl) {
+        plainData.profilePictureUrl =
+            extractAvatarUrl(plainData.profilePic) ||
+            extractAvatarUrl(plainData.avatar) ||
+            extractAvatarUrl(plainData.avatarUrl) ||
+            extractAvatarUrl(plainData.picture) ||
+            extractAvatarUrl(plainData.avatarThumb) ||
+            extractAvatarUrl(plainData.avatar_thumb) ||
+            extractAvatarUrl(plainData.avatarMedium) ||
+            null;
+    }
+
+    if (!plainData.uniqueId) plainData.uniqueId = '';
+    if (!plainData.nickname) plainData.nickname = plainData.uniqueId || 'مستخدم';
+    if (!plainData.profilePictureUrl) {
+        plainData.profilePictureUrl = `https://ui-avatars.com/api/?name=${encodeURIComponent(plainData.nickname)}&background=random&color=fff&bold=true`;
+    }
+    return plainData;
 }
 
 function startMarathonLoop(roomId, socket) {
