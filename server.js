@@ -1541,8 +1541,8 @@ function getGameTypeFromId(gameId) {
             enableWebsocketUpgrade: true,   // WebSocket أسرع من HTTP polling للاستقبال
             requestPollingIntervalMs: 2000, // تقليل فترة polling الاحتياطي إلى 2 ثانية
             signProviderOptions: {
-                host: process.env.TIKTOK_SIGN_HOST || 'https://tiktok-sign.zerody.one/',
-                params: process.env.TIKTOK_SIGN_API_KEY ? { apiKey: process.env.TIKTOK_SIGN_API_KEY } : {}
+                host: process.env.TIKTOK_SIGN_HOST || (process.env.TIKTOK_SIGN_API_KEY ? 'https://tiktok.eulerstream.com/' : 'https://tiktok-sign.zerody.one/'),
+                params: process.env.TIKTOK_SIGN_API_KEY ? { apiKey: process.env.TIKTOK_SIGN_API_KEY.trim() } : {}
             }
         };
 
