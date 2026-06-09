@@ -3,7 +3,7 @@ const http = require('http');
 const cors = require('cors');
 const admin = require('firebase-admin');
 const { Server } = require('socket.io');
-const { WebcastPushConnection, SignConfig } = require('tiktok-live-connector'); // إضافة مكتبة تيك توك
+const { TikTokLiveConnection, SignConfig } = require('tiktok-live-connector'); // إضافة مكتبة تيك توك
 
 const app = express();
 app.use(cors());
@@ -59,15 +59,16 @@ if (serviceAccount) {
 
 const db = serviceAccount ? admin.firestore() : null;
 
-// تهيئة خادم توقيع اتصال التيك توك EulerStream
-if (process.env.TIKTOK_SIGN_API_KEY) {
-    try {
+// تهيئة خادم توقيع اتصال التيك توك بشكل عام
+try {
+    if (process.env.TIKTOK_SIGN_API_KEY) {
         SignConfig.apiKey = process.env.TIKTOK_SIGN_API_KEY.trim();
-        SignConfig.basePath = (process.env.TIKTOK_SIGN_HOST ? process.env.TIKTOK_SIGN_HOST.trim() : 'https://tiktok.eulerstream.com').replace(/\/+$/, '');
-        console.log(`[TikTok SignConfig] EulerStream configured with API Key. BasePath: ${SignConfig.basePath}`);
-    } catch (e) {
-        console.error(`[TikTok SignConfig] Error setting SignConfig:`, e.message);
     }
+    // إزالة السلاش الإضافي دائماً لتجنب خطأ //webcast/fetch
+    SignConfig.basePath = (process.env.TIKTOK_SIGN_HOST || (process.env.TIKTOK_SIGN_API_KEY ? 'https://tiktok.eulerstream.com' : 'https://tiktok-sign.zerody.one')).replace(/\/+$/, '');
+    console.log(`[TikTok SignConfig] Configured. BasePath: ${SignConfig.basePath}`);
+} catch (e) {
+    console.error(`[TikTok SignConfig] Error setting SignConfig:`, e.message);
 }
 
 // ===== [SECURITY] التوقيع الرقمي وإدارة الجلسات الآمنة =====
@@ -1594,16 +1595,17 @@ function getGameTypeFromId(gameId) {
                 io.to(roomName).emit('tiktok_reconnecting', { attempt, maxAttempts: 5 });
             }
 
-            let tiktokLiveConnection = new WebcastPushConnection(username, connectionOptions);
+            let tiktokLiveConnection = new TikTokLiveConnection(username, connectionOptions);
 
             tiktokLiveConnection.connect().then(state => {
                 console.log(`✅ تم الاتصال بنجاح ببث: @${username} (RoomID: ${state.roomId}) (Reconnect: ${isReconnect})`);
 
-                const profilePic = state.roomInfo?.owner?.avatar_large?.url_list?.[0] ||
-                    state.roomInfo?.owner?.avatar_medium?.url_list?.[0] ||
-                    state.roomInfo?.owner?.avatar_thumb?.url_list?.[0] ||
+                const owner = state.roomInfo?.data?.owner || state.roomInfo?.owner;
+                const profilePic = owner?.avatar_large?.url_list?.[0] ||
+                    owner?.avatar_medium?.url_list?.[0] ||
+                    owner?.avatar_thumb?.url_list?.[0] ||
                     'https://ui-avatars.com/api/?name=' + username;
-                const nickname = state.roomInfo?.owner?.nickname || username;
+                const nickname = owner?.nickname || username;
 
                 if (roomsData[socket.id]) {
                     roomsData[socket.id].tiktokConn = tiktokLiveConnection;
