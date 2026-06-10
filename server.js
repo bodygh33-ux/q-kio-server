@@ -1277,9 +1277,10 @@ function flattenTikTokData(data) {
         msgId: msgId
     };
 
-    // نقل الخصائص الأخرى من الكائن الأصلي التي قد لا تكون مفرودة
+    // نقل الخصائص الأخرى من الكائن الأصلي التي قد لا تكون مفرودة بشرط ألا تمسح الحقول الأساسية المستخرجة بنجاح
+    const protectedKeys = ['profilePictureUrl', 'uniqueId', 'nickname', 'followRole', 'followInfo', 'giftId', 'giftName', 'repeatCount', 'repeatEnd', 'msgId'];
     for (const key of Object.keys(data)) {
-        if (!(key in result) && typeof data[key] !== 'function') {
+        if (!protectedKeys.includes(key) && !(key in result) && typeof data[key] !== 'function') {
             result[key] = data[key];
         }
     }
