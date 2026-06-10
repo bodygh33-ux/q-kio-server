@@ -153,16 +153,23 @@ app.get('/api/proxy-image', async (req, res) => {
         });
 
         request.on('error', (err) => {
-            console.warn('[ImageProxy] Error fetching:', url, err.message);
-            if (!res.headersSent) res.status(502).send('Proxy error');
+            console.warn('[ImageProxy] Error fetching, redirecting to original URL:', url, err.message);
+            if (!res.headersSent) res.redirect(url);
         });
 
         request.on('timeout', () => {
             request.destroy();
-            if (!res.headersSent) res.status(504).send('Proxy timeout');
+            console.warn('[ImageProxy] Timeout fetching, redirecting to original URL:', url);
+            if (!res.headersSent) res.redirect(url);
         });
     } catch(err) {
-        if (!res.headersSent) res.status(500).send('Internal error');
+        if (!res.headersSent) {
+            try {
+                res.redirect(url);
+            } catch(redirectErr) {
+                res.status(500).send('Internal error');
+            }
+        }
     }
 });
 
