@@ -116,7 +116,10 @@ app.get('/api/proxy-image', async (req, res) => {
         'byteoversea.com',
         'ibytedtos.com',
         'akamaized.net',
-        'ui-avatars.com'
+        'ui-avatars.com',
+        'ibyteimg.com',
+        'byteimg.com',
+        'ipstatp.com'
     ];
 
     let hostname;
