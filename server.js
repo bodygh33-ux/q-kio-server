@@ -1255,6 +1255,28 @@ function flattenTikTokData(data) {
         if (rawGift.repeatEnd !== undefined) repeatEnd = rawGift.repeatEnd;
     }
 
+    // خريطة احتياطية لأسماء الهدايا الشائعة في حال عدم جلب البيانات الكاملة من التيك توك (تجنباً لقيم null)
+    if (!giftName && giftId) {
+        const giftIdStr = String(giftId);
+        const commonGifts = {
+            '5655': 'Rose',
+            '5820': 'TikTok',
+            '5269': 'Finger Heart',
+            '5585': 'Ice Cream',
+            '6059': 'Doughnut',
+            '5487': 'Paper Crane',
+            '5844': 'Crown',
+            '5617': 'Cap',
+            '5765': 'Hearts',
+            '6093': 'Diamond',
+            '6427': 'Gamepad',
+            '5660': 'Lollipop'
+        };
+        if (commonGifts[giftIdStr]) {
+            giftName = commonGifts[giftIdStr];
+        }
+    }
+
     // بناء الكائن النهائي المفرود مع الحفاظ على باقي الخصائص الأصلية
     const result = {
         ...plainData,
@@ -1781,7 +1803,7 @@ function getGameTypeFromId(gameId) {
 
         const connectionOptions = {
             processInitialData: false,      // لا نعالج البيانات الأولية لتوفير الموارد
-            enableExtendedGiftInfo: false,  // تعطيل معلومات الهدايا الكاملة لتفادي أخطاء الـ 403 للويبكاست في بيتا 2.1.1
+            enableExtendedGiftInfo: true,   // تفعيل معلومات الهدايا الكاملة للحصول على أسماء الهدايا وتكلفتها
             requestPollingIntervalMs: 2000, // تقليل فترة polling الاحتياطي إلى 2 ثانية
             signApiKey: process.env.TIKTOK_SIGN_API_KEY ? process.env.TIKTOK_SIGN_API_KEY.trim() : undefined
         };
