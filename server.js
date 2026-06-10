@@ -104,73 +104,48 @@ function verifySecureToken(token) {
 // Removed verifySocketAuth definition as requested.
 
 // --- Image Proxy لصور التيك توك (تجاوز قيود CORS) ---
-app.get('/api/proxy-image', async (req, res) => {
+app.get('/api/proxy-image', (req, res) => {
     const url = req.query.url;
-    if (!url) return res.status(400).send('Missing url parameter');
+    if (!url) return res.status(400).send('Missing url');
 
-    // السماح فقط بصور من نطاقات التيك توك المعروفة أو ui-avatars
     const allowedDomains = [
-        'tiktokcdn.com',
-        'tiktok.com',
-        'muscdn.com',
-        'byteoversea.com',
-        'ibytedtos.com',
-        'akamaized.net',
-        'ui-avatars.com',
-        'ibyteimg.com',
-        'byteimg.com',
-        'ipstatp.com'
+        'tiktokcdn.com', 'tiktok.com', 'muscdn.com',
+        'byteoversea.com', 'ibytedtos.com', 'akamaized.net',
+        'ibyteimg.com', 'byteimg.com', 'ipstatp.com'
     ];
 
     let hostname;
-    try {
-        hostname = new URL(url).hostname;
-    } catch(e) {
-        return res.status(400).send('Invalid URL');
-    }
+    try { hostname = new URL(url).hostname; }
+    catch(e) { return res.status(400).send('Invalid URL'); }
 
     if (!allowedDomains.some(d => hostname.endsWith(d))) {
         return res.status(403).send('Domain not allowed');
     }
 
-    try {
-        const https = require('https');
-        const http2 = require('http');
-        const protocol = url.startsWith('https') ? https : http2;
+    const https = require('https');
+    const fallback = `https://ui-avatars.com/api/?name=U&background=random&color=fff`;
 
-        const request = protocol.get(url, {
-            headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                'Referer': 'https://www.tiktok.com/',
-                'Accept': 'image/avif,image/webp,image/apng,image/*,*/*;q=0.8',
-            },
-            timeout: 8000
-        }, (imgRes) => {
-            res.set('Access-Control-Allow-Origin', '*');
-            res.set('Cache-Control', 'public, max-age=86400');
-            res.set('Content-Type', imgRes.headers['content-type'] || 'image/jpeg');
-            imgRes.pipe(res);
-        });
+    const request = https.get(url, {
+        headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            'Referer': 'https://www.tiktok.com/',
+            'Accept': 'image/avif,image/webp,image/apng,image/*,*/*;q=0.8',
+        },
+        timeout: 8000
+    }, (imgRes) => {
+        res.set('Access-Control-Allow-Origin', '*');
+        res.set('Cache-Control', 'public, max-age=86400');
+        res.set('Content-Type', imgRes.headers['content-type'] || 'image/jpeg');
+        imgRes.pipe(res);
+    });
 
-        request.on('error', (err) => {
-            console.warn('[ImageProxy] Error fetching, falling back to ui-avatars:', err.message);
-            if (!res.headersSent) res.redirect(`https://ui-avatars.com/api/?name=U&background=random&color=fff&bold=true`);
-        });
-
-        request.on('timeout', () => {
-            request.destroy();
-            console.warn('[ImageProxy] Timeout fetching, falling back to ui-avatars');
-            if (!res.headersSent) res.redirect(`https://ui-avatars.com/api/?name=U&background=random&color=fff&bold=true`);
-        });
-    } catch(err) {
-        if (!res.headersSent) {
-            try {
-                res.redirect(`https://ui-avatars.com/api/?name=U&background=random&color=fff&bold=true`);
-            } catch(redirectErr) {
-                res.status(500).send('Internal error');
-            }
-        }
-    }
+    request.on('error', () => {
+        if (!res.headersSent) res.redirect(fallback);
+    });
+    request.on('timeout', () => {
+        request.destroy();
+        if (!res.headersSent) res.redirect(fallback);
+    });
 });
 
 // --- APIs للتحكم بالأكواد وإدارة الجلسات ---
@@ -803,7 +778,7 @@ function checkMarathonJoinPermission(state, data) {
 
 // تحويل رابط صورة التيك توك إلى proxy URL لتجاوز قيود CORS في المتصفح
 function proxyAvatarUrl(url) {
-    if (!url || url.includes('ui-avatars.com') || url.startsWith('/api/')) return url;
+    if (!url || url.includes('ui-avatars.com')) return url;
     return `/api/proxy-image?url=${encodeURIComponent(url)}`;
 }
 
