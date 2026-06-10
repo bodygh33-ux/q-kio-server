@@ -1196,8 +1196,8 @@ function flattenTikTokData(data) {
 
     // استخراج معلومات المستخدم من الكائن الأصلي مباشرة أولاً، ثم كفالباك من الكائن المفرود
     const rawUser = data.user || data.sender || data.userDetails || data.author || 
-                    plainData.user || plainData.sender || plainData.userDetails || plainData.author;
-    const userObj = rawUser || {};
+                    plainData.user || plainData.sender || plainData.userDetails || plainData.author || {};
+    const userObj = rawUser;
 
     // استخلاص الحقول الأساسية
     const uniqueId = data.uniqueId || plainData.uniqueId || userObj.uniqueId || '';
@@ -1208,6 +1208,15 @@ function flattenTikTokData(data) {
 
     // استخراج صورة الملف الشخصي من كل الأماكن الممكنة
     let profilePictureUrl = data.profilePictureUrl || plainData.profilePictureUrl || userObj.profilePictureUrl || null;
+
+    if (!profilePictureUrl) {
+        // فحص مباشر وصريح داخل كائنات التيك توك الرسمية المتداخلة
+        const rawUserPic = data.user?.profilePicture || data.sender?.profilePicture || 
+                           data.user?.avatar || data.sender?.avatar ||
+                           plainData.user?.profilePicture || plainData.sender?.profilePicture;
+        
+        profilePictureUrl = extractAvatarUrl(rawUserPic);
+    }
 
     if (!profilePictureUrl) {
         // البحث في كائن المستخدم بناء على حقول اللوج الحقيقية
