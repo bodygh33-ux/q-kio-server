@@ -1688,6 +1688,7 @@ function getGameTypeFromReferer(referer) {
     if (lower.includes('kharabisha.html')) return 'kharabisha';
     if (lower.includes('numble.html')) return 'numble';
     if (lower.includes('hexagon-maze.html')) return 'hexagon-maze';
+    if (lower.includes('salata.html')) return 'salata';
     return 'tiktok_bomb';
 }
 
@@ -1702,6 +1703,7 @@ function getGameTypeFromId(gameId) {
     if (id === 'kharabisha') return 'kharabisha';
     if (id === 'numble') return 'numble';
     if (id === 'hexagon-maze') return 'hexagon-maze';
+    if (id === 'salata' || id === 'tiktok_salata') return 'salata';
     return id;
 }
 
@@ -1725,7 +1727,7 @@ function getGameTypeFromId(gameId) {
         const roomName = 'tiktok_' + username;
         socket.join(roomName);
 
-        // Check if there is an existing room for this user to allow seamless reconnect
+        // Check if there is an existing room for this user, and if so, clean it up completely before starting fresh
         const existingRoomId = Object.keys(roomsData).find(rId => {
             const room = roomsData[rId];
             return room && room.isTikTok && room.tiktokUser && room.tiktokUser.trim().toLowerCase() === username;
@@ -1733,60 +1735,34 @@ function getGameTypeFromId(gameId) {
 
         if (existingRoomId) {
             const oldRoom = roomsData[existingRoomId];
-            console.log(`[TikTok Reconnect] Found existing connection for @${username} (Old socket: ${existingRoomId}, New: ${socket.id})`);
+            console.log(`[TikTok Reset] Found existing room for @${username} (Old socket: ${existingRoomId}, New: ${socket.id}). Deleting old room and starting fresh...`);
             
-            // Clear any active disconnect cleanup timer
+            // Clear any active disconnect cleanup timer and inactivity timer
             if (oldRoom.cleanupTimer) {
                 clearTimeout(oldRoom.cleanupTimer);
-                oldRoom.cleanupTimer = null;
+            }
+            if (oldRoom.timer) {
+                clearTimeout(oldRoom.timer);
             }
 
-            // Transfer room to new socket ID
-            roomsData[socket.id] = oldRoom;
-            roomsData[socket.id].hostSocketId = socket.id; // تحديث معرف سوكت الهوست لتجنب التحذيرات الأمنية
-            
-            if (existingRoomId !== socket.id) {
-                delete roomsData[existingRoomId];
-                if (marathonLoops[existingRoomId]) {
-                    marathonLoops[socket.id] = marathonLoops[existingRoomId];
-                    delete marathonLoops[existingRoomId];
+            // Disconnect old TikTok connection
+            if (oldRoom.tiktokConn) {
+                try {
+                    oldRoom.tiktokConn.disconnect();
+                } catch (e) {
+                    console.error(`[TikTok Reset] Error disconnecting old connection:`, e.message);
                 }
             }
 
-            // تحقق مما إذا كان المستخدم قد قام بتغيير اللعبة (مثلاً انتقل من الماراثون إلى القنبلة)
-            const oldGameType = oldRoom.gameState?.gameType;
-            if (oldGameType !== targetGameType) {
-                console.log(`[TikTok Game Switch] Host switched from ${oldGameType} to ${targetGameType}. Resetting game state...`);
-                
-                // إيقاف أي حلقات سباق أو مؤقتات نشطة للعبة القديمة
-                if (marathonLoops[socket.id]) {
-                    clearInterval(marathonLoops[socket.id]);
-                    delete marathonLoops[socket.id];
-                }
-                delete marathonQueues[socket.id];
-                
-                // إعادة تعيين حالة اللعبة والفلتر لتناسب اللعبة الجديدة
-                oldRoom.gameState = { gameType: targetGameType };
-                oldRoom.chatFilter = null;
-                
-                // حذف الحالات الخاصة بالألعاب الأخرى
-                delete oldRoom.marathonState;
-                delete oldRoom.rouletteState;
+            // Clean up marathon loops/queues
+            if (marathonLoops[existingRoomId]) {
+                clearInterval(marathonLoops[existingRoomId]);
+                delete marathonLoops[existingRoomId];
             }
+            delete marathonQueues[existingRoomId];
 
-            // Update socket reference
-            socket.tiktokConn = oldRoom.tiktokConn;
-            
-            // Emit success to new socket
-            const profilePic = oldRoom.profilePic || 'https://ui-avatars.com/api/?name=' + username;
-            const nickname = oldRoom.nickname || username;
-            socket.emit('tiktok_connected', { profilePic, nickname });
-
-            // Re-send the current filter if it exists
-            if (oldRoom.chatFilter) {
-                socket.emit('syncState', oldRoom.gameState);
-            }
-            return;
+            // Delete old room data
+            delete roomsData[existingRoomId];
         }
 
         // كول داون 15 ثانية بين محاولات الربط لنفس الحساب (لتجنب الحظر والسبام)
@@ -2178,35 +2154,41 @@ function getGameTypeFromId(gameId) {
     });
 
     socket.on('disconnect', () => {
-        const room = roomsData[socket.id];
-        if (room && room.isTikTok) {
-            console.log(`[TikTok Host Disconnect] Host socket ${socket.id} disconnected. Starting 180s buffer...`);
-            // Start a 180s countdown to delete the room and connection if host doesn't reconnect
-            room.cleanupTimer = setTimeout(() => {
-                console.log(`[TikTok Host Cleanup] Room for @${room.tiktokUser} cleaned up after host disconnect.`);
+        // 1. Disconnect TikTok Live connection associated with this socket immediately
+        if (socket.tiktokConn) {
+            console.log(`[TikTok Socket Disconnect] Disconnecting TikTokLiveConnection for socket ${socket.id}`);
+            try {
+                socket.tiktokConn.disconnect();
+            } catch (e) {}
+            socket.tiktokConn = null;
+        }
+
+        // 2. Clean up marathon loops/queues
+        if (marathonLoops[socket.id]) {
+            clearInterval(marathonLoops[socket.id]);
+            delete marathonLoops[socket.id];
+        }
+        delete marathonQueues[socket.id];
+
+        // 3. Find if this socket owns any room (either by socket.id or hostSocketId) and clean it up immediately
+        for (const roomId in roomsData) {
+            const room = roomsData[roomId];
+            if (roomId === socket.id || room.hostSocketId === socket.id) {
+                console.log(`[Socket Disconnect] Cleaning up room ${roomId} owned by host socket ${socket.id} immediately.`);
+                if (room.timer) clearTimeout(room.timer);
+                if (room.cleanupTimer) clearTimeout(room.cleanupTimer);
                 if (room.tiktokConn) {
                     try { room.tiktokConn.disconnect(); } catch (e) {}
                 }
-                if (marathonLoops[socket.id]) {
-                    clearInterval(marathonLoops[socket.id]);
-                    delete marathonLoops[socket.id];
+                if (marathonLoops[roomId]) {
+                    clearInterval(marathonLoops[roomId]);
+                    delete marathonLoops[roomId];
                 }
-                delete roomsData[socket.id];
-                broadcastDashboardUpdate();
-            }, 180000);
-        } else {
-            if (socket.tiktokConn) {
-                socket.tiktokConn.disconnect();
-            }
-            if (marathonLoops[socket.id]) {
-                clearInterval(marathonLoops[socket.id]);
-                delete marathonLoops[socket.id];
-            }
-            if (roomsData[socket.id]) {
-                if (roomsData[socket.id].timer) clearTimeout(roomsData[socket.id].timer);
-                delete roomsData[socket.id];
+                delete marathonQueues[roomId];
+                delete roomsData[roomId];
             }
         }
+
         setTimeout(broadcastDashboardUpdate, 1000);
     });
 
