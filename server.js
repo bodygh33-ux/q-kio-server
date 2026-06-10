@@ -108,16 +108,14 @@ app.get('/api/proxy-image', async (req, res) => {
     const url = req.query.url;
     if (!url) return res.status(400).send('Missing url parameter');
 
-    // السماح فقط بصور من نطاقات التيك توك المعروفة
+    // السماح فقط بصور من نطاقات التيك توك المعروفة أو ui-avatars
     const allowedDomains = [
-        'p16-sign.tiktokcdn.com',
-        'p19-sign.tiktokcdn.com',
-        'p77-sign.tiktokcdn.com',
-        'p19-amd-ov.tiktokcdn.com',
-        'p16-amd-ov.tiktokcdn.com',
-        'p77-amd-ov.tiktokcdn.com',
-        'p16-pu.tiktokcdn.com',
-        'p19-pu.tiktokcdn.com',
+        'tiktokcdn.com',
+        'tiktok.com',
+        'muscdn.com',
+        'byteoversea.com',
+        'ibytedtos.com',
+        'akamaized.net',
         'ui-avatars.com'
     ];
 
@@ -875,10 +873,7 @@ function handleMarathonGift(roomId, data) {
     const room = roomsData[roomId];
     if (!room || !room.marathonState) return;
 
-    // تخطي الهدايا أثناء عداد الكومبو
-    if (data.repeatEnd === false) return;
-
-    // إلغاء تكرار الهدايا (Combo deduplication) - يبقى فورياً لأنه حماية ضد التكرار
+    // إلغاء تكرار الهدايا (Combo deduplication) باستخدام msgId
     const msgId = data.msgId;
     const state = room.marathonState;
     if (msgId) {
@@ -888,7 +883,10 @@ function handleMarathonGift(roomId, data) {
         // تنظيف دوري للـ Set عند تجاوز 500 عنصر
         if (state.processedGifts.size > 500) {
             const iter = state.processedGifts.values();
-            for (let i = 0; i < 100; i++) state.processedGifts.delete(iter.next().value);
+            for (let i = 0; i < 100; i++) {
+                const nextVal = iter.next().value;
+                if (nextVal !== undefined) state.processedGifts.delete(nextVal);
+            }
         }
     }
 
@@ -1175,71 +1173,107 @@ function flattenTikTokData(data) {
     if (_debugLogCount < 5) {
         _debugLogCount++;
         try {
-            // استخدام for...in لرؤية كل الـ properties بما فيها prototype
             const allKeys = [];
             for (const k in data) allKeys.push(k);
             console.log(`[DEBUG flattenTikTokData #${_debugLogCount}] constructor: ${data.constructor?.name}, all keys (for..in):`, allKeys);
             console.log(`[DEBUG] uniqueId=${data.uniqueId}, nickname=${data.nickname}, profilePictureUrl=${data.profilePictureUrl}`);
-            if (data.user) console.log(`[DEBUG] data.user:`, JSON.stringify(deepExtractObject(data.user)).substring(0, 300));
-            if (data.sender) console.log(`[DEBUG] data.sender:`, JSON.stringify(deepExtractObject(data.sender)).substring(0, 300));
-            if (data.author) console.log(`[DEBUG] data.author:`, JSON.stringify(deepExtractObject(data.author)).substring(0, 300));
-            const avatarCandidates = {};
-            for (const k of ['avatarThumb','avatar_thumb','avatarMedium','avatar','profilePic','profilePictureUrl','avatarUrl','picture']) {
-                if (data[k] !== undefined) avatarCandidates[k] = data[k];
-            }
-            if (Object.keys(avatarCandidates).length > 0) console.log(`[DEBUG] avatar candidates on root:`, JSON.stringify(avatarCandidates).substring(0, 400));
-        } catch(e) { console.log('[DEBUG] could not stringify:', e.message); }
+            if (data.user) console.log(`[DEBUG] data.user keys:`, Object.keys(data.user), `uniqueId=${data.user.uniqueId}, profilePictureUrl=${data.user.profilePictureUrl}`);
+        } catch(e) { console.log('[DEBUG] could not print debug info:', e.message); }
     }
 
     // تسطيح البيانات باستخدام deepExtractObject لالتقاط prototype properties أيضاً
-    const plainData = deepExtractObject(data);
+    const plainData = deepExtractObject(data) || {};
 
-    // استخراج معلومات المستخدم من أي حقل ممكن
-    const rawUser = plainData.user || plainData.sender || plainData.userDetails || plainData.author;
-    const userObj = rawUser ? deepExtractObject(rawUser) : {};
+    // استخراج معلومات المستخدم من الكائن الأصلي مباشرة أولاً، ثم كفالباك من الكائن المفرود
+    const rawUser = data.user || data.sender || data.userDetails || data.author || 
+                    plainData.user || plainData.sender || plainData.userDetails || plainData.author;
+    const userObj = rawUser || {};
 
-    if (Object.keys(userObj).length > 0) {
-        if (!plainData.uniqueId && userObj.uniqueId) plainData.uniqueId = userObj.uniqueId;
-        if (!plainData.nickname && userObj.nickname) plainData.nickname = userObj.nickname;
-        if (userObj.followRole !== undefined && plainData.followRole === undefined) plainData.followRole = userObj.followRole;
-        if (userObj.followInfo && !plainData.followInfo) plainData.followInfo = userObj.followInfo;
+    // استخلاص الحقول الأساسية
+    const uniqueId = data.uniqueId || plainData.uniqueId || userObj.uniqueId || '';
+    const nickname = data.nickname || plainData.nickname || userObj.nickname || uniqueId || 'مستخدم';
+    
+    let followRole = data.followRole !== undefined ? data.followRole : (plainData.followRole !== undefined ? plainData.followRole : userObj.followRole);
+    let followInfo = data.followInfo || plainData.followInfo || userObj.followInfo;
 
-        // استخراج صورة الملف الشخصي من userObj بكل الصيغ الممكنة
-        if (!plainData.profilePictureUrl) {
-            plainData.profilePictureUrl =
-                extractAvatarUrl(userObj.profilePictureUrl) ||
-                extractAvatarUrl(userObj.profilePic) ||
-                extractAvatarUrl(userObj.avatar) ||
-                extractAvatarUrl(userObj.avatarThumb) ||
-                extractAvatarUrl(userObj.avatar_thumb) ||
-                extractAvatarUrl(userObj.avatarMedium) ||
-                extractAvatarUrl(userObj.avatar_medium) ||
-                extractAvatarUrl(userObj.avatarLarge) ||
-                extractAvatarUrl(userObj.avatar_large) ||
-                extractAvatarUrl(userObj.avatarUrl) ||
-                null;
+    // استخراج صورة الملف الشخصي من كل الأماكن الممكنة
+    let profilePictureUrl = data.profilePictureUrl || plainData.profilePictureUrl || userObj.profilePictureUrl || null;
+
+    if (!profilePictureUrl) {
+        // البحث في كائن المستخدم
+        profilePictureUrl =
+            extractAvatarUrl(userObj.profilePicture) ||
+            extractAvatarUrl(userObj.profilePictureUrl) ||
+            extractAvatarUrl(userObj.profilePic) ||
+            extractAvatarUrl(userObj.avatar) ||
+            extractAvatarUrl(userObj.avatarThumb) ||
+            extractAvatarUrl(userObj.avatar_thumb) ||
+            extractAvatarUrl(userObj.avatarMedium) ||
+            extractAvatarUrl(userObj.avatar_medium) ||
+            extractAvatarUrl(userObj.avatarLarge) ||
+            extractAvatarUrl(userObj.avatar_large) ||
+            extractAvatarUrl(userObj.avatarUrl);
+    }
+
+    if (!profilePictureUrl) {
+        // البحث في الكائن الرئيسي (الأصلي والمفرود)
+        profilePictureUrl =
+            extractAvatarUrl(data.profilePicture) ||
+            extractAvatarUrl(plainData.profilePicture) ||
+            extractAvatarUrl(data.profilePic) ||
+            extractAvatarUrl(plainData.profilePic) ||
+            extractAvatarUrl(data.avatar) ||
+            extractAvatarUrl(plainData.avatar) ||
+            extractAvatarUrl(data.avatarUrl) ||
+            extractAvatarUrl(plainData.avatarUrl) ||
+            extractAvatarUrl(data.picture) ||
+            extractAvatarUrl(plainData.picture) ||
+            extractAvatarUrl(data.avatarThumb) ||
+            extractAvatarUrl(plainData.avatarThumb) ||
+            extractAvatarUrl(data.avatar_thumb) ||
+            extractAvatarUrl(plainData.avatar_thumb) ||
+            extractAvatarUrl(data.avatarMedium) ||
+            extractAvatarUrl(plainData.avatarMedium);
+    }
+
+    // استخراج بيانات الهدية الممكنة لتجنب الاختلافات في البنية
+    let giftId = data.giftId || plainData.giftId || null;
+    let giftName = data.giftName || plainData.giftName || null;
+    let repeatCount = data.repeatCount || plainData.repeatCount || 1;
+    let repeatEnd = data.repeatEnd !== undefined ? data.repeatEnd : plainData.repeatEnd;
+    let msgId = data.msgId || plainData.msgId || null;
+
+    const rawGift = data.gift || plainData.gift;
+    if (rawGift && typeof rawGift === 'object') {
+        if (!giftId) giftId = rawGift.giftId || rawGift.gift_id || rawGift.id;
+        if (!giftName) giftName = rawGift.giftName || rawGift.gift_name || rawGift.name;
+        if (rawGift.repeatCount !== undefined) repeatCount = rawGift.repeatCount;
+        if (rawGift.repeatEnd !== undefined) repeatEnd = rawGift.repeatEnd;
+    }
+
+    // بناء الكائن النهائي المفرود مع الحفاظ على باقي الخصائص الأصلية
+    const result = {
+        ...plainData,
+        uniqueId: uniqueId,
+        nickname: nickname,
+        followRole: followRole,
+        followInfo: followInfo,
+        profilePictureUrl: profilePictureUrl || `https://ui-avatars.com/api/?name=${encodeURIComponent(nickname)}&background=random&color=fff&bold=true`,
+        giftId: giftId,
+        giftName: giftName,
+        repeatCount: repeatCount,
+        repeatEnd: repeatEnd,
+        msgId: msgId
+    };
+
+    // نقل الخصائص الأخرى من الكائن الأصلي التي قد لا تكون مفرودة
+    for (const key of Object.keys(data)) {
+        if (!(key in result) && typeof data[key] !== 'function') {
+            result[key] = data[key];
         }
     }
 
-    // بحث مباشر في plainData عن حقول الصورة الممكنة
-    if (!plainData.profilePictureUrl) {
-        plainData.profilePictureUrl =
-            extractAvatarUrl(plainData.profilePic) ||
-            extractAvatarUrl(plainData.avatar) ||
-            extractAvatarUrl(plainData.avatarUrl) ||
-            extractAvatarUrl(plainData.picture) ||
-            extractAvatarUrl(plainData.avatarThumb) ||
-            extractAvatarUrl(plainData.avatar_thumb) ||
-            extractAvatarUrl(plainData.avatarMedium) ||
-            null;
-    }
-
-    if (!plainData.uniqueId) plainData.uniqueId = '';
-    if (!plainData.nickname) plainData.nickname = plainData.uniqueId || 'مستخدم';
-    if (!plainData.profilePictureUrl) {
-        plainData.profilePictureUrl = `https://ui-avatars.com/api/?name=${encodeURIComponent(plainData.nickname)}&background=random&color=fff&bold=true`;
-    }
-    return plainData;
+    return result;
 }
 
 function startMarathonLoop(roomId, socket) {
@@ -1740,7 +1774,7 @@ function getGameTypeFromId(gameId) {
 
         const connectionOptions = {
             processInitialData: false,      // لا نعالج البيانات الأولية لتوفير الموارد
-            enableExtendedGiftInfo: true,   // معلومات الهدايا الكاملة (مهم للماراثون)
+            enableExtendedGiftInfo: false,  // تعطيل معلومات الهدايا الكاملة لتفادي أخطاء الـ 403 للويبكاست في بيتا 2.1.1
             requestPollingIntervalMs: 2000, // تقليل فترة polling الاحتياطي إلى 2 ثانية
             signApiKey: process.env.TIKTOK_SIGN_API_KEY ? process.env.TIKTOK_SIGN_API_KEY.trim() : undefined
         };
