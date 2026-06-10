@@ -153,19 +153,19 @@ app.get('/api/proxy-image', async (req, res) => {
         });
 
         request.on('error', (err) => {
-            console.warn('[ImageProxy] Error fetching, redirecting to original URL:', url, err.message);
-            if (!res.headersSent) res.redirect(url);
+            console.warn('[ImageProxy] Error fetching, falling back to ui-avatars:', err.message);
+            if (!res.headersSent) res.redirect(`https://ui-avatars.com/api/?name=U&background=random&color=fff&bold=true`);
         });
 
         request.on('timeout', () => {
             request.destroy();
-            console.warn('[ImageProxy] Timeout fetching, redirecting to original URL:', url);
-            if (!res.headersSent) res.redirect(url);
+            console.warn('[ImageProxy] Timeout fetching, falling back to ui-avatars');
+            if (!res.headersSent) res.redirect(`https://ui-avatars.com/api/?name=U&background=random&color=fff&bold=true`);
         });
     } catch(err) {
         if (!res.headersSent) {
             try {
-                res.redirect(url);
+                res.redirect(`https://ui-avatars.com/api/?name=U&background=random&color=fff&bold=true`);
             } catch(redirectErr) {
                 res.status(500).send('Internal error');
             }
@@ -801,6 +801,12 @@ function checkMarathonJoinPermission(state, data) {
     return !!isFollower;
 }
 
+// تحويل رابط صورة التيك توك إلى proxy URL لتجاوز قيود CORS في المتصفح
+function proxyAvatarUrl(url) {
+    if (!url || url.includes('ui-avatars.com') || url.startsWith('/api/')) return url;
+    return `/api/proxy-image?url=${encodeURIComponent(url)}`;
+}
+
 function handleMarathonChat(roomId, data) {
     const room = roomsData[roomId];
     if (!room || !room.marathonState) return;
@@ -1169,9 +1175,12 @@ function extractAvatarUrl(avatarField) {
     if (!avatarField) return null;
     if (typeof avatarField === 'string' && avatarField.startsWith('http')) return avatarField;
     if (typeof avatarField === 'object') {
+        // v2.x protobuf: Image.url is an Array of strings (e.g. ["https://...100x100.webp", "https://...jpeg"])
+        if (Array.isArray(avatarField.url) && avatarField.url.length > 0) return avatarField.url[0];
+        // Legacy formats
         const urls = avatarField.urlList || avatarField.url_list || avatarField.urls;
         if (Array.isArray(urls) && urls.length > 0) return urls[0];
-        if (typeof avatarField.url === 'string') return avatarField.url;
+        if (typeof avatarField.url === 'string' && avatarField.url.startsWith('http')) return avatarField.url;
     }
     return null;
 }
@@ -1183,11 +1192,11 @@ function flattenTikTokData(data) {
     if (_debugLogCount < 5) {
         _debugLogCount++;
         try {
-            const allKeys = [];
-            for (const k in data) allKeys.push(k);
-            console.log(`[DEBUG flattenTikTokData #${_debugLogCount}] constructor: ${data.constructor?.name}, all keys (for..in):`, allKeys);
-            console.log(`[DEBUG] uniqueId=${data.uniqueId}, nickname=${data.nickname}, profilePictureUrl=${data.profilePictureUrl}`);
-            if (data.user) console.log(`[DEBUG] data.user keys:`, Object.keys(data.user), `uniqueId=${data.user.uniqueId}, profilePictureUrl=${data.user.profilePictureUrl}`);
+            console.log(`[DEBUG flattenTikTokData #${_debugLogCount}] uniqueId=${data.uniqueId}, nickname=${data.nickname}`);
+            if (data.user) {
+                const pp = data.user.profilePicture;
+                console.log(`[DEBUG] data.user.profilePicture type=${typeof pp}, isArray(url)=${pp && Array.isArray(pp.url)}, url[0]=${pp?.url?.[0]?.substring(0,80)}...`);
+            }
         } catch(e) { console.log('[DEBUG] could not print debug info:', e.message); }
     }
 
@@ -1278,7 +1287,9 @@ function flattenTikTokData(data) {
         nickname: nickname,
         followRole: followRole,
         followInfo: followInfo,
-        profilePictureUrl: profilePictureUrl || `https://ui-avatars.com/api/?name=${encodeURIComponent(nickname)}&background=random&color=fff&bold=true`,
+        profilePictureUrl: profilePictureUrl
+            ? proxyAvatarUrl(profilePictureUrl)
+            : `https://ui-avatars.com/api/?name=${encodeURIComponent(nickname)}&background=random&color=fff&bold=true`,
         giftId: giftId,
         giftName: giftName,
         repeatCount: repeatCount,
