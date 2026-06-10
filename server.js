@@ -1203,10 +1203,11 @@ function flattenTikTokData(data) {
     let profilePictureUrl = data.profilePictureUrl || plainData.profilePictureUrl || userObj.profilePictureUrl || null;
 
     if (!profilePictureUrl) {
-        // البحث في كائن المستخدم
+        // البحث في كائن المستخدم بناء على حقول اللوج الحقيقية
         profilePictureUrl =
             extractAvatarUrl(userObj.profilePicture) ||
-            extractAvatarUrl(userObj.profilePictureUrl) ||
+            extractAvatarUrl(userObj.profilePictureMedium) ||
+            extractAvatarUrl(userObj.profilePictureLarge) ||
             extractAvatarUrl(userObj.profilePic) ||
             extractAvatarUrl(userObj.avatar) ||
             extractAvatarUrl(userObj.avatarThumb) ||
