@@ -577,27 +577,11 @@ function broadcastDashboardUpdate() {
 
 function resetRoomTimer(roomId) {
     if (roomsData[roomId]) {
-        if (roomsData[roomId].timer) clearTimeout(roomsData[roomId].timer);
-
-        roomsData[roomId].timer = setTimeout(() => {
-            if (!roomsData[roomId]) return; // حماية ضد الأخطاء إذا تم مسح الغرفة مسبقاً
-            console.log(`[تنظيف أوتوماتيكي] حذف الغرفة ${roomId} بسبب الخمول.`);
-            io.to(roomId).emit('roomClosed', 'تم إغلاق الغرفة بسبب عدم التفاعل لفترة طويلة');
-            io.in(roomId).socketsLeave(roomId);
-
-            // إغلاق اتصال التيك توك لو كان موجود
-            if (roomsData[roomId].tiktokConn) {
-                roomsData[roomId].tiktokConn.disconnect();
-            }
-
-            if (marathonLoops[roomId]) {
-                clearInterval(marathonLoops[roomId]);
-                delete marathonLoops[roomId];
-            }
-
-            delete roomsData[roomId];
-            broadcastDashboardUpdate();
-        }, 30 * 60 * 1000);
+        if (roomsData[roomId].timer) {
+            clearTimeout(roomsData[roomId].timer);
+            roomsData[roomId].timer = null;
+        }
+        // تم إلغاء تنظيف الغرفة التلقائي بسبب الخمول لمنع حذف الرومات أثناء البث
     }
 }
 
