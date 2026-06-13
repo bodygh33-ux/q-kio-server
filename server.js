@@ -2068,9 +2068,8 @@ function getGameTypeFromId(gameId) {
         const existingRoom = roomsData[roomId];
         const originalGameType = existingRoom && existingRoom.gameState ? (existingRoom.gameState.gameType || existingRoom.gameState.type) : null;
         const resolvedGameType = gameType || originalGameType;
-
         // التحقق الأمني: يسمح للألعاب المجانية بالمرور بدون توكن
-        const isFreeGame = ['countries_war', 'fruit_war', 'flip_turn', 'memory'].includes(resolvedGameType);
+        const isFreeGame = ['countries_war', 'fruit_war', 'flip_turn', 'memory', 'lucky_wheel'].includes(resolvedGameType);
         
         if (!isFreeGame) {
             if (!socket.decodedToken || (socket.decodedToken.type !== 'vip' && socket.decodedToken.type !== 'tiktok')) {
