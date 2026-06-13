@@ -647,11 +647,14 @@ app.get('/dashboard', (req, res) => {
                     'tiktok_marathon': 'تيك توك: الماراثون الجماعي 🏃‍♂️',
                     'tiktok_rockets': 'تيك توك: حرب الصواريخ 🚀',
                     'tiktok_sniper': 'تيك توك: القناص 🎯',
-                    'trivia_survival': 'تيك توك: البقاء للمثقفين 🧠',
+                    'trivia_survival': 'تيك توك: شطب ❌',
+                    'tiktok-trivia-survival': 'تيك توك: شطب ❌',
+                    'tiktok_trivia_survival': 'تيك توك: شطب ❌',
                     'kharabisha': 'تيك توك: خربيشة ✏️',
                     'numble': 'تيك توك: نمبل 🔢',
                     'hexagon-maze': 'تيك توك: المتاهة السداسية 🌀',
                     'salata': 'تيك توك: سلطة 🥗',
+                    'zehniat': 'تيك توك: ذهنيات 🧠',
                     'million_decision': 'قرار بمليون 💰',
                     'غير معروف': 'في الانتظار ⏳'
                 };
@@ -1682,6 +1685,7 @@ function getGameTypeFromReferer(referer) {
     if (lower.includes('salata.html')) return 'salata';
     if (lower.includes('tiktok-sniper.html')) return 'tiktok_sniper';
     if (lower.includes('trivia-survival.html')) return 'trivia_survival';
+    if (lower.includes('zehniat.html')) return 'zehniat';
     
     // محاولة استخراج اسم الملف تلقائياً لتجنب الرجوع للقنبلة كخيار افتراضي خاطئ
     const match = referer.match(/\/([^\/]+)\.html/i);
@@ -1705,7 +1709,8 @@ function getGameTypeFromId(gameId) {
     if (id === 'hexagon-maze') return 'hexagon-maze';
     if (id === 'salata' || id === 'tiktok_salata') return 'salata';
     if (id === 'sniper' || id === 'tiktok_sniper') return 'tiktok_sniper';
-    if (id === 'trivia-survival' || id === 'trivia_survival') return 'trivia_survival';
+    if (id === 'trivia-survival' || id === 'trivia_survival' || id === 'tiktok-trivia-survival') return 'trivia_survival';
+    if (id === 'zehniat') return 'zehniat';
     return id;
 }
 
