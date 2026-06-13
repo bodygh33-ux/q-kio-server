@@ -646,6 +646,13 @@ app.get('/dashboard', (req, res) => {
                     'tiktok_russian_roulette': 'تيك توك: الروليت الروسي 🔫',
                     'tiktok_marathon': 'تيك توك: الماراثون الجماعي 🏃‍♂️',
                     'tiktok_rockets': 'تيك توك: حرب الصواريخ 🚀',
+                    'tiktok_sniper': 'تيك توك: القناص 🎯',
+                    'trivia_survival': 'تيك توك: البقاء للمثقفين 🧠',
+                    'kharabisha': 'تيك توك: خربيشة ✏️',
+                    'numble': 'تيك توك: نمبل 🔢',
+                    'hexagon-maze': 'تيك توك: المتاهة السداسية 🌀',
+                    'salata': 'تيك توك: سلطة 🥗',
+                    'million_decision': 'قرار بمليون 💰',
                     'غير معروف': 'في الانتظار ⏳'
                 };
                 
@@ -1662,7 +1669,7 @@ io.on('connection', (socket) => {
 
 // دوال مساعدة لتحديد نوع اللعبة من الرابط أو المعرف لتسهيل إعادة التهيئة عند الانتقال بين الألعاب
 function getGameTypeFromReferer(referer) {
-    if (!referer) return 'tiktok_bomb';
+    if (!referer) return 'غير معروف';
     const lower = referer.toLowerCase();
     if (lower.includes('marathon.html')) return 'tiktok_marathon';
     if (lower.includes('tiktok-russian-roulette.html')) return 'tiktok_russian_roulette';
@@ -1673,11 +1680,20 @@ function getGameTypeFromReferer(referer) {
     if (lower.includes('numble.html')) return 'numble';
     if (lower.includes('hexagon-maze.html')) return 'hexagon-maze';
     if (lower.includes('salata.html')) return 'salata';
-    return 'tiktok_bomb';
+    if (lower.includes('tiktok-sniper.html')) return 'tiktok_sniper';
+    if (lower.includes('trivia-survival.html')) return 'trivia_survival';
+    
+    // محاولة استخراج اسم الملف تلقائياً لتجنب الرجوع للقنبلة كخيار افتراضي خاطئ
+    const match = referer.match(/\/([^\/]+)\.html/i);
+    if (match && match[1]) {
+        return match[1];
+    }
+    
+    return 'غير معروف';
 }
 
 function getGameTypeFromId(gameId) {
-    if (!gameId) return 'tiktok_bomb';
+    if (!gameId) return 'غير معروف';
     const id = gameId.toLowerCase();
     if (id === 'marathon' || id === 'tiktok_marathon') return 'tiktok_marathon';
     if (id === 'tiktok-russian-roulette' || id === 'tiktok_russian_roulette') return 'tiktok_russian_roulette';
@@ -1688,6 +1704,8 @@ function getGameTypeFromId(gameId) {
     if (id === 'numble') return 'numble';
     if (id === 'hexagon-maze') return 'hexagon-maze';
     if (id === 'salata' || id === 'tiktok_salata') return 'salata';
+    if (id === 'sniper' || id === 'tiktok_sniper') return 'tiktok_sniper';
+    if (id === 'trivia-survival' || id === 'trivia_survival') return 'trivia_survival';
     return id;
 }
 
