@@ -5,6 +5,40 @@ const admin = require('firebase-admin');
 const { Server } = require('socket.io');
 const { TikTokLiveConnection, SignConfig } = require('tiktok-live-connector'); // إضافة مكتبة تيك توك
 
+// تهيئة Long لدعم الأرقام الكبيرة من تيك توك 2.x بشكل آمن ومتوافق
+let Long = null;
+try {
+    Long = require('long');
+} catch (e) {
+    console.warn("⚠️ Warning: 'long' package not found in node_modules. Using custom fallback parser.");
+}
+
+function ensureStringId(val) {
+    if (val === null || val === undefined) return '';
+    if (typeof val === 'string') return val;
+    if (typeof val === 'number') return String(val);
+    if (Long && Long.isLong(val)) return val.toString();
+    if (typeof val === 'object') {
+        if (val.low !== undefined && val.high !== undefined) {
+            if (Long) {
+                return new Long(val.low, val.high, val.unsigned).toString();
+            } else {
+                const high = val.high;
+                const low = val.low;
+                if (val.unsigned) {
+                    return ((high >>> 0) * 4294967296 + (low >>> 0)).toString();
+                } else {
+                    return (high * 4294967296 + (low >>> 0)).toString();
+                }
+            }
+        }
+        if (typeof val.toString === 'function') {
+            return val.toString();
+        }
+    }
+    return String(val);
+}
+
 const app = express();
 app.use(cors());
 app.use(express.json());
@@ -1154,7 +1188,7 @@ function extractAvatarUrl(avatarField) {
     return null;
 }
 
-function flattenTikTokData(data) {
+function flattenTikTokData(data, availableGifts) {
     if (!data) return data;
 
     // DEBUG: طباعة هيكل البيانات الأول 5 مرات لمعرفة الشكل الحقيقي
@@ -1249,6 +1283,18 @@ function flattenTikTokData(data) {
         if (rawGift.repeatEnd !== undefined) repeatEnd = rawGift.repeatEnd;
     }
 
+    // توحيد المعرفات الكبيرة (Long objects) إلى نصوص عادية لمنع مشاكل النقل والمطابقة
+    if (giftId) giftId = ensureStringId(giftId);
+    if (msgId) msgId = ensureStringId(msgId);
+
+    // محاولة جلب اسم الهدية من القائمة المتاحة في السيرفر بناءً على المعرف الموحد
+    if (!giftName && giftId && availableGifts && Array.isArray(availableGifts)) {
+        const foundGift = availableGifts.find(x => x && x.id && ensureStringId(x.id) === giftId);
+        if (foundGift) {
+            giftName = foundGift.name || foundGift.describe;
+        }
+    }
+
     // خريطة احتياطية لأسماء الهدايا الشائعة في حال عدم جلب البيانات الكاملة من التيك توك (تجنباً لقيم null)
     if (!giftName && giftId) {
         const giftIdStr = String(giftId);
@@ -1287,6 +1333,12 @@ function flattenTikTokData(data) {
         repeatEnd: repeatEnd,
         msgId: msgId
     };
+
+    // توحيد معرفات المستخدم إلى نصوص
+    if (result.userId) result.userId = ensureStringId(result.userId);
+    if (result.user && result.user.userId) result.user.userId = ensureStringId(result.user.userId);
+    if (result.sender && result.sender.userId) result.sender.userId = ensureStringId(result.sender.userId);
+    if (result.createTime) result.createTime = ensureStringId(result.createTime);
 
     // نقل الخصائص الأخرى من الكائن الأصلي التي قد لا تكون مفرودة بشرط ألا تمسح الحقول الأساسية المستخرجة بنجاح
     const protectedKeys = ['profilePictureUrl', 'uniqueId', 'nickname', 'followRole', 'followInfo', 'giftId', 'giftName', 'repeatCount', 'repeatEnd', 'msgId'];
@@ -1873,7 +1925,7 @@ function getGameTypeFromId(gameId) {
 
                 // تمرير أحداث تيك توك للعميل عبر الغرفة (مع حماية الفلترة والتطبيع العربي)
                 tiktokLiveConnection.on('chat', data => {
-                    data = flattenTikTokData(data);
+                    data = flattenTikTokData(data, tiktokLiveConnection.availableGifts);
                     const currentRoomId = Object.keys(roomsData).find(rId => roomsData[rId] && roomsData[rId].tiktokConn === tiktokLiveConnection);
                     if (!currentRoomId) return;
                     const room = roomsData[currentRoomId];
@@ -1933,7 +1985,7 @@ function getGameTypeFromId(gameId) {
                 });
 
                 tiktokLiveConnection.on('gift', data => {
-                    data = flattenTikTokData(data);
+                    data = flattenTikTokData(data, tiktokLiveConnection.availableGifts);
                     const currentRoomId = Object.keys(roomsData).find(rId => roomsData[rId] && roomsData[rId].tiktokConn === tiktokLiveConnection);
                     if (!currentRoomId) return;
                     const room = roomsData[currentRoomId];
@@ -1945,7 +1997,7 @@ function getGameTypeFromId(gameId) {
                 });
 
                 tiktokLiveConnection.on('like', data => {
-                    data = flattenTikTokData(data);
+                    data = flattenTikTokData(data, tiktokLiveConnection.availableGifts);
                     const currentRoomId = Object.keys(roomsData).find(rId => roomsData[rId] && roomsData[rId].tiktokConn === tiktokLiveConnection);
                     if (!currentRoomId) return;
                     const room = roomsData[currentRoomId];
@@ -1957,7 +2009,7 @@ function getGameTypeFromId(gameId) {
                 });
 
                 tiktokLiveConnection.on('share', data => {
-                    data = flattenTikTokData(data);
+                    data = flattenTikTokData(data, tiktokLiveConnection.availableGifts);
                     const currentRoomId = Object.keys(roomsData).find(rId => roomsData[rId] && roomsData[rId].tiktokConn === tiktokLiveConnection);
                     if (!currentRoomId) return;
                     const room = roomsData[currentRoomId];
