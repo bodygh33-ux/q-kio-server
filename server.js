@@ -485,6 +485,15 @@ app.post('/api/user/validate-tiktok-code', async (req, res) => {
             return res.status(400).json({ success: false, message: 'انتهت صلاحية الكود.', isExpired: true });
         }
 
+        if (data.platforms && data.platforms.length > 0) {
+            const requestedPlatform = platform || 'tiktok';
+            if (!data.platforms.includes('all') && !data.platforms.includes(requestedPlatform)) {
+                const platformNames = { tiktok: 'تيك توك', twitch: 'تويتش', kick: 'كيك' };
+                const pName = platformNames[requestedPlatform] || requestedPlatform;
+                return res.status(400).json({ success: false, message: `عذراً، هذا الكود غير مفعل لمنصة ${pName}.` });
+            }
+        }
+
         const usedDevices = data.usedDevices || [];
         if (data.device && !usedDevices.includes(data.device)) {
             usedDevices.push(data.device);
