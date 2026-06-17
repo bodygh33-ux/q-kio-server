@@ -1592,6 +1592,15 @@ function flattenTikTokData(data, availableGifts) {
         }
     }
 
+    // استخراج الاسم من رسالة الوصف (Describe) كطبقة أمان أخيرة (لضمان عمل حرب الصواريخ والماراثون)
+    if (!giftName) {
+        const descStr = data.describe || plainData.describe || (rawGift && rawGift.describe) || (data.giftDetails && data.giftDetails.describe);
+        if (descStr && typeof descStr === 'string') {
+            const desc = descStr.trim();
+            giftName = desc.match(/^Sent\s+/i) ? desc.replace(/^Sent\s+/i, '') : desc;
+        }
+    }
+
     // بناء الكائن النهائي المفرود مع الحفاظ على باقي الخصائص الأصلية
     const result = {
         ...plainData,
