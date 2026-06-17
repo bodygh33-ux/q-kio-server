@@ -2255,16 +2255,13 @@ function getGameTypeFromId(gameId) {
                     const agent = new HttpsProxyAgent(proxyUrl);
                     
                     connectionOptions.webClientOptions = {
-                        httpsAgent: agent,
-                        headers: { 'Accept-Encoding': 'gzip, deflate' }
+                        httpsAgent: agent
                     };
                     connectionOptions.wsClientOptions = {
-                        agent: agent,
-                        headers: { 'Accept-Encoding': 'gzip, deflate' }
+                        agent: agent
                     };
                     connectionOptions.requestOptions = {
-                        httpsAgent: agent,
-                        headers: { 'Accept-Encoding': 'gzip, deflate' }
+                        httpsAgent: agent
                     };
                 } catch (proxyErr) {
                     console.error(`❌ فشل تهيئة البروكسي:`, proxyErr.message);
