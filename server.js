@@ -1570,6 +1570,7 @@ function flattenTikTokData(data, availableGifts) {
     if (!giftName && giftId) {
         const giftIdStr = String(giftId);
         const commonGifts = {
+            // هدايا الألعاب (Marathon & Rocket War) الأساسية
             '5655': 'Rose',
             '5820': 'TikTok',
             '5269': 'Finger Heart',
@@ -1581,7 +1582,10 @@ function flattenTikTokData(data, availableGifts) {
             '5765': 'Hearts',
             '6093': 'Diamond',
             '6427': 'Gamepad',
-            '5660': 'Lollipop'
+            '5660': 'Lollipop',
+            '6064': 'GG',
+            '5355': 'Chili',
+            '7934': 'Rocket'
         };
         if (commonGifts[giftIdStr]) {
             giftName = commonGifts[giftIdStr];
@@ -2212,7 +2216,7 @@ function getGameTypeFromId(gameId) {
 
             const connectionOptions = {
                 processInitialData: false,      // لا نعالج البيانات الأولية لتوفير الموارد
-                enableExtendedGiftInfo: true,   // تفعيل معلومات الهدايا الكاملة للحصول على أسماء الهدايا وتكلفتها
+                enableExtendedGiftInfo: false,  // إيقاف لتحسين استهلاك البيانات (تعتمد على commonGifts)
                 requestPollingIntervalMs: 2000, // تقليل فترة polling الاحتياطي إلى 2 ثانية
                 signApiKey: process.env.TIKTOK_SIGN_API_KEY ? process.env.TIKTOK_SIGN_API_KEY.trim() : undefined
             };
@@ -2242,13 +2246,16 @@ function getGameTypeFromId(gameId) {
                     const agent = new HttpsProxyAgent(proxyUrl);
                     
                     connectionOptions.webClientOptions = {
-                        httpsAgent: agent
+                        httpsAgent: agent,
+                        headers: { 'Accept-Encoding': 'gzip, deflate' }
                     };
                     connectionOptions.wsClientOptions = {
-                        agent: agent
+                        agent: agent,
+                        headers: { 'Accept-Encoding': 'gzip, deflate' }
                     };
                     connectionOptions.requestOptions = {
-                        httpsAgent: agent
+                        httpsAgent: agent,
+                        headers: { 'Accept-Encoding': 'gzip, deflate' }
                     };
                 } catch (proxyErr) {
                     console.error(`❌ فشل تهيئة البروكسي:`, proxyErr.message);
@@ -2362,7 +2369,9 @@ function getGameTypeFromId(gameId) {
                             try { roomsData[currentRoomId].tiktokConn.disconnect(); } catch(e){}
                         }
                         if (socket.connected && currentRoomId && roomsData[currentRoomId]) {
-                            startTikTokConnection(1, true);
+                            setTimeout(() => {
+                                startTikTokConnection(1, true);
+                            }, 5000);
                         }
                     });
 
