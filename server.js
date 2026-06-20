@@ -874,7 +874,8 @@ function broadcastDashboardUpdate() {
             createdAt: roomsData[id].createdAt,
             gameType: gType,
             isTikTok: roomsData[id].isTikTok || false,
-            tiktokUser: roomsData[id].tiktokUser || null
+            tiktokUser: roomsData[id].tiktokUser || null,
+            activationCode: roomsData[id].activationCode || null
         };
     }
     io.to('admin_room').emit('roomsUpdate', activeRooms);
@@ -925,6 +926,7 @@ app.get('/dashboard', (req, res) => {
                 <thead>
                     <tr>
                         <th>رقم الروم (الكود / يوزر التيك توك)</th>
+                        <th>كود التفعيل</th>
                         <th>اللعبة</th>
                         <th>عدد الأجهزة المتصلة</th>
                         <th>تاريخ الإنشاء</th>
@@ -932,7 +934,7 @@ app.get('/dashboard', (req, res) => {
                     </tr>
                 </thead>
                 <tbody id="roomsTable">
-                    <tr><td colspan="5">جاري التحميل...</td></tr>
+                    <tr><td colspan="6">جاري التحميل...</td></tr>
                 </tbody>
             </table>
 
@@ -971,7 +973,7 @@ app.get('/dashboard', (req, res) => {
                     const roomIds = Object.keys(rooms);
 
                     if (roomIds.length === 0) {
-                        tbody.innerHTML = '<tr><td colspan="5">لا توجد أي رومات مفتوحة حالياً.</td></tr>';
+                        tbody.innerHTML = '<tr><td colspan="6">لا توجد أي رومات مفتوحة حالياً.</td></tr>';
                         return;
                     }
 
@@ -982,6 +984,7 @@ app.get('/dashboard', (req, res) => {
                         const count = room.playerCount;
                         const gType = room.gameType;
                         const gameDisplayName = gameNamesMap[gType] || gType;
+                        const activationCode = room.activationCode || 'بدون كود (مفتوح)';
                         
                         let displayId = id;
                         let badgeClass = 'game-badge';
@@ -992,12 +995,13 @@ app.get('/dashboard', (req, res) => {
 
                         html += \`
                             <tr>
-                                <td><strong style="font-size:1.1rem;">\${displayId}</strong></td>
-                                <td><span class="\${badgeClass}">\${gameDisplayName}</span></td>
-                                <td><strong>\${count}</strong> جهاز</td>
-                                <td>\${time}</td>
+                                <td><strong style="font-size:1.1rem;">\\\${displayId}</strong></td>
+                                <td><span style="font-family:monospace; background:#e0e7ff; color:#312e81; padding:4px 8px; border-radius:6px; font-weight:bold;">\\\${activationCode}</span></td>
+                                <td><span class="\\\${badgeClass}">\\\${gameDisplayName}</span></td>
+                                <td><strong>\\\${count}</strong> جهاز</td>
+                                <td>\\\${time}</td>
                                 <td>
-                                    <button class="btn-delete" onclick="deleteRoom('\${id}')">إغلاق وحذف</button>
+                                    <button class="btn-delete" onclick="deleteRoom('\\\\${id}')">إغلاق وحذف</button>
                                 </td>
                             </tr>
                         \`;
@@ -2147,6 +2151,7 @@ function getGameTypeFromId(gameId) {
                         roomsData[socket.id].twitchConn = conn;
                         roomsData[socket.id].profilePic = profilePic;
                         roomsData[socket.id].nickname = nickname;
+                        roomsData[socket.id].activationCode = socket.decodedToken?.code || null;
                     } else {
                         roomsData[socket.id] = {
                             createdAt: Date.now(),
@@ -2158,7 +2163,8 @@ function getGameTypeFromId(gameId) {
                             chatFilter: null,
                             profilePic: profilePic,
                             nickname: nickname,
-                            hostSocketId: socket.id
+                            hostSocketId: socket.id,
+                            activationCode: socket.decodedToken?.code || null
                         };
                     }
                     resetRoomTimer(socket.id);
@@ -2193,6 +2199,7 @@ function getGameTypeFromId(gameId) {
                         roomsData[socket.id].kickConn = conn;
                         roomsData[socket.id].profilePic = profilePic;
                         roomsData[socket.id].nickname = nickname;
+                        roomsData[socket.id].activationCode = socket.decodedToken?.code || null;
                     } else {
                         roomsData[socket.id] = {
                             createdAt: Date.now(),
@@ -2204,7 +2211,8 @@ function getGameTypeFromId(gameId) {
                             chatFilter: null,
                             profilePic: profilePic,
                             nickname: nickname,
-                            hostSocketId: socket.id
+                            hostSocketId: socket.id,
+                            activationCode: socket.decodedToken?.code || null
                         };
                     }
                     resetRoomTimer(socket.id);
@@ -2315,6 +2323,7 @@ function getGameTypeFromId(gameId) {
                         roomsData[socket.id].nickname = nickname;
                         roomsData[socket.id].hostSocketId = socket.id; // تعيين معرف سوكت الهوست لتجنب التحذيرات الأمنية
                         roomsData[socket.id].reconnectCount = 0; // تصفير العداد عند نجاح الاتصال والاستقرار
+                        roomsData[socket.id].activationCode = socket.decodedToken?.code || null;
                     } else {
                         roomsData[socket.id] = {
                             createdAt: Date.now(),
@@ -2327,7 +2336,8 @@ function getGameTypeFromId(gameId) {
                             profilePic: profilePic,
                             nickname: nickname,
                             hostSocketId: socket.id, // تعيين معرف سوكت الهوست لتجنب التحذيرات الأمنية
-                            reconnectCount: 0 // تصفير العداد عند نجاح الاتصال والاستقرار
+                            reconnectCount: 0, // تصفير العداد عند نجاح الاتصال والاستقرار
+                            activationCode: socket.decodedToken?.code || null
                         };
                     }
                     resetRoomTimer(socket.id); // بدء عداد الحذف التلقائي (30 دقيقة)
@@ -2534,7 +2544,8 @@ function getGameTypeFromId(gameId) {
                 timer: null,
                 hostSocketId: socket.id, // تسجيل معرف سوكت الهوست للتحقق اللاحق
                 hostClient: hostClient,
-                deviceId: currentDeviceId
+                deviceId: currentDeviceId,
+                activationCode: socket.decodedToken?.code || null
             };
         } else {
             // تحديث سوكت الهوست عند إعادة إنشاء نفس الغرفة (مثلاً بعد إعادة تحميل الصفحة أو إعادة الاتصال)
@@ -2553,6 +2564,7 @@ function getGameTypeFromId(gameId) {
                 existingRoom.hostSocketId = socket.id;
                 existingRoom.hostClient = hostClient;
                 existingRoom.deviceId = currentDeviceId;
+                existingRoom.activationCode = socket.decodedToken?.code || null;
                 if (resolvedGameType && (!existingRoom.gameState || !existingRoom.gameState.gameType)) {
                     if (!existingRoom.gameState) existingRoom.gameState = {};
                     existingRoom.gameState.gameType = resolvedGameType;
