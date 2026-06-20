@@ -2251,13 +2251,25 @@ function getGameTypeFromId(gameId) {
             if (proxyUrl) {
                 try {
                     const urlObj = new URL(proxyUrl);
-                    // تنظيف اسم مستخدم التيك توك من أي حروف خاصة لمنع إفساد صياغة URL
-                    const cleanUser = username.replace(/[^a-zA-Z0-9]/g, '');
-                    urlObj.username = `${urlObj.username}-session-${cleanUser}`;
+                    // تحويل المنفذ (Port) إلى منفذ مثبت (Sticky Port) في النطاق 10000–20000
+                    // بناءً على اسم مستخدم التيك توك لضمان منفذ مخصص وثابت لكل مشترك
+                    const portRangeStart = 10000;
+                    const portRangeEnd = 20000;
+                    const range = portRangeEnd - portRangeStart + 1;
+                    
+                    let hash = 0;
+                    const cleanUser = username.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+                    for (let i = 0; i < cleanUser.length; i++) {
+                        hash = cleanUser.charCodeAt(i) + ((hash << 5) - hash);
+                    }
+                    const offset = Math.abs(hash) % range;
+                    const stickyPort = portRangeStart + offset;
+                    
+                    urlObj.port = String(stickyPort);
                     proxyUrl = urlObj.toString();
-                    console.log(`[Proxy] توجيه اتصال التيك توك عبر البروكسي المثبت للجلسة: (Sticky Session: ${cleanUser})`);
+                    console.log(`[Proxy] توجيه اتصال التيك توك عبر منفذ مثبت (Sticky Session Port: ${stickyPort}) لـ @${username}`);
                 } catch (e) {
-                    console.error(`❌ فشل تخصيص البروكسي المثبت للجلسة، استخدام الرابط الأصلي:`, e.message);
+                    console.error(`❌ فشل تخصيص المنفذ المثبت للبروكسي، استخدام الرابط الأصلي:`, e.message);
                 }
 
                 console.log(`[Proxy] توجيه اتصال التيك توك عبر البروكسي: ${proxyUrl.replace(/:[^:]*@/, ':****@')}`);
