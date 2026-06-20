@@ -993,18 +993,16 @@ app.get('/dashboard', (req, res) => {
                             badgeClass += ' tiktok-badge';
                         }
 
-                        html += \`
-                            <tr>
-                                <td><strong style="font-size:1.1rem;">\\\${displayId}</strong></td>
-                                <td><span style="font-family:monospace; background:#e0e7ff; color:#312e81; padding:4px 8px; border-radius:6px; font-weight:bold;">\\\${activationCode}</span></td>
-                                <td><span class="\\\${badgeClass}">\\\${gameDisplayName}</span></td>
-                                <td><strong>\\\${count}</strong> جهاز</td>
-                                <td>\\\${time}</td>
-                                <td>
-                                    <button class="btn-delete" onclick="deleteRoom('\\\\${id}')">إغلاق وحذف</button>
-                                </td>
-                            </tr>
-                        \`;
+                        html += '<tr>' +
+                                '<td><strong style="font-size:1.1rem;">' + displayId + '</strong></td>' +
+                                '<td><span style="font-family:monospace; background:#e0e7ff; color:#312e81; padding:4px 8px; border-radius:6px; font-weight:bold;">' + activationCode + '</span></td>' +
+                                '<td><span class="' + badgeClass + '">' + gameDisplayName + '</span></td>' +
+                                '<td><strong>' + count + '</strong> جهاز</td>' +
+                                '<td>' + time + '</td>' +
+                                '<td>' +
+                                    '<button class="btn-delete" onclick="deleteRoom(\'' + id + '\')">إغلاق وحذف</button>' +
+                                '</td>' +
+                            '</tr>';
                     });
                     tbody.innerHTML = html;
                 });
