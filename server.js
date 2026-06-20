@@ -1005,7 +1005,7 @@ app.get('/dashboard', (req, res) => {
                                 '<td><strong>' + count + '</strong> جهاز</td>' +
                                 '<td>' + time + '</td>' +
                                 '<td>' +
-                                    '<button class="btn-delete" onclick="deleteRoom(\'' + id + '\')">إغلاق وحذف</button>' +
+                                    '<button class="btn-delete" onclick="deleteRoom(\\\'' + id + '\\\')">إغلاق وحذف</button>' +
                                 '</td>' +
                             '</tr>';
                     });
