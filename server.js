@@ -2246,9 +2246,20 @@ function getGameTypeFromId(gameId) {
                 }
             }
 
-            // دعم البروكسي لتخطي حظر الـ IP من خوادم Render
-            const proxyUrl = process.env.TIKTOK_PROXY_URL;
+            // دعم البروكسي لتخطي حظر الـ IP من خوادم Render مع دعم الجلسة المثبتة (Sticky Session)
+            let proxyUrl = process.env.TIKTOK_PROXY_URL;
             if (proxyUrl) {
+                try {
+                    const urlObj = new URL(proxyUrl);
+                    // تنظيف اسم مستخدم التيك توك من أي حروف خاصة لمنع إفساد صياغة URL
+                    const cleanUser = username.replace(/[^a-zA-Z0-9]/g, '');
+                    urlObj.username = `${urlObj.username}-session-${cleanUser}`;
+                    proxyUrl = urlObj.toString();
+                    console.log(`[Proxy] توجيه اتصال التيك توك عبر البروكسي المثبت للجلسة: (Sticky Session: ${cleanUser})`);
+                } catch (e) {
+                    console.error(`❌ فشل تخصيص البروكسي المثبت للجلسة، استخدام الرابط الأصلي:`, e.message);
+                }
+
                 console.log(`[Proxy] توجيه اتصال التيك توك عبر البروكسي: ${proxyUrl.replace(/:[^:]*@/, ':****@')}`);
                 try {
                     const { HttpsProxyAgent } = require('https-proxy-agent');
@@ -2291,6 +2302,7 @@ function getGameTypeFromId(gameId) {
                         roomsData[socket.id].profilePic = profilePic;
                         roomsData[socket.id].nickname = nickname;
                         roomsData[socket.id].hostSocketId = socket.id; // تعيين معرف سوكت الهوست لتجنب التحذيرات الأمنية
+                        roomsData[socket.id].reconnectCount = 0; // تصفير العداد عند نجاح الاتصال والاستقرار
                     } else {
                         roomsData[socket.id] = {
                             createdAt: Date.now(),
@@ -2302,7 +2314,8 @@ function getGameTypeFromId(gameId) {
                             chatFilter: null,
                             profilePic: profilePic,
                             nickname: nickname,
-                            hostSocketId: socket.id // تعيين معرف سوكت الهوست لتجنب التحذيرات الأمنية
+                            hostSocketId: socket.id, // تعيين معرف سوكت الهوست لتجنب التحذيرات الأمنية
+                            reconnectCount: 0 // تصفير العداد عند نجاح الاتصال والاستقرار
                         };
                     }
                     resetRoomTimer(socket.id); // بدء عداد الحذف التلقائي (30 دقيقة)
@@ -2369,15 +2382,31 @@ function getGameTypeFromId(gameId) {
                     });
 
                     tiktokLiveConnection.on('disconnected', () => {
-                        console.log(`[TikTok Disconnected] Connection dropped for @${username}. Initiating reconnect...`);
                         const currentRoomId = Object.keys(roomsData).find(rId => roomsData[rId] && roomsData[rId].tiktokConn === tiktokLiveConnection);
-                        if (currentRoomId && roomsData[currentRoomId] && roomsData[currentRoomId].tiktokConn) {
+                        if (!currentRoomId || !roomsData[currentRoomId]) return;
+
+                        if (roomsData[currentRoomId].tiktokConn) {
                             try { roomsData[currentRoomId].tiktokConn.disconnect(); } catch(e){}
                         }
-                        if (socket.connected && currentRoomId && roomsData[currentRoomId]) {
+
+                        if (!roomsData[currentRoomId].reconnectCount) {
+                            roomsData[currentRoomId].reconnectCount = 0;
+                        }
+                        roomsData[currentRoomId].reconnectCount++;
+
+                        console.log(`[TikTok Disconnected] Connection dropped for @${username}. Reconnect attempt ${roomsData[currentRoomId].reconnectCount}/3...`);
+
+                        if (roomsData[currentRoomId].reconnectCount > 3) {
+                            console.log(`[TikTok Reconnect Limit] Max reconnect attempts reached for @${username}. Stopping to save proxy bandwidth.`);
+                            io.to(roomName).emit('tiktok_disconnected', 'انقطع الاتصال بالبث بشكل متكرر. يرجى التأكد من استقرار البروكسي والضغط على ربط البث مجدداً يدوياً.');
+                            return;
+                        }
+
+                        if (socket.connected) {
+                            // زيادة وقت المحاولة الاحتياطي لـ 15 ثانية لمنح البروكسي السكني فرصة للاستقرار
                             setTimeout(() => {
                                 startTikTokConnection(1, true);
-                            }, 5000);
+                            }, 15000);
                         }
                     });
 
