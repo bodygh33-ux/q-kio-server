@@ -914,6 +914,8 @@ app.get('/dashboard', (req, res) => {
                 tr:hover { background-color: #f1f1f1; }
                 .btn-delete { background: #e74c3c; color: white; border: none; padding: 8px 15px; cursor: pointer; border-radius: 4px; font-weight: bold;}
                 .btn-delete:hover { background: #c0392b; }
+                .btn-refresh { background: #3498db; color: white; border: none; padding: 10px 20px; cursor: pointer; border-radius: 6px; font-weight: bold; font-size: 1rem; transition: 0.3s; }
+                .btn-refresh:hover { background: #2980b9; }
                 .live-badge { background: #2ecc71; color: white; padding: 3px 8px; border-radius: 12px; font-size: 12px; animation: pulse 2s infinite; }
                 .game-badge { background: rgba(0, 198, 255, 0.1); color: #0072ff; padding: 6px 12px; border-radius: 20px; font-weight: bold; border: 1px solid rgba(0, 198, 255, 0.3); display: inline-block; }
                 .tiktok-badge { background: rgba(255, 0, 80, 0.1); color: #EE1D52; border-color: rgba(255, 0, 80, 0.3); }
@@ -921,7 +923,10 @@ app.get('/dashboard', (req, res) => {
             </style>
         </head>
         <body>
-            <h2>رومات Q-Kio النشطة <span class="live-badge">Live 🔴</span></h2>
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px; flex-wrap:wrap; gap:10px;">
+                <h2 style="margin:0;">رومات Q-Kio النشطة <span class="live-badge">Live 🔴</span></h2>
+                <button class="btn-refresh" onclick="refreshAllClients()">تحديث وإعادة تشغيل أجهزة اللاعبين 🔄</button>
+            </div>
             <table>
                 <thead>
                     <tr>
@@ -1012,6 +1017,14 @@ app.get('/dashboard', (req, res) => {
                         fetch('/delete-room?id=' + id + '&pass=${ADMIN_PASSWORD}');
                     }
                 }
+
+                function refreshAllClients() {
+                    if(confirm('هل أنت متأكد من رغبتك في إجبار جميع الأجهزة المفتوحة حالياً على تحديث الصفحة؟ (سيعيد روماتهم للظهور إذا كانوا متصلين)')) {
+                        fetch('/refresh-all-clients?pass=${ADMIN_PASSWORD}')
+                            .then(r => r.text())
+                            .then(txt => alert(txt));
+                    }
+                }
             </script>
         </body>
         </html>
@@ -1039,6 +1052,12 @@ app.get('/delete-room', (req, res) => {
         broadcastDashboardUpdate();
     }
     res.send('تم الحذف بنجاح');
+});
+
+app.get('/refresh-all-clients', (req, res) => {
+    if (req.query.pass !== ADMIN_PASSWORD) return res.status(401).send('غير مصرح لك');
+    io.emit('force_reload');
+    res.send('تم إرسال أمر تحديث الصفحة لجميع المتصلين بنجاح');
 });
 
 
