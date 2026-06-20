@@ -2356,11 +2356,18 @@ function getGameTypeFromId(gameId) {
                     });
 
                     tiktokLiveConnection.on('like', data => {
-                        data = flattenTikTokData(data, tiktokLiveConnection.availableGifts);
                         const currentRoomId = Object.keys(roomsData).find(rId => roomsData[rId] && roomsData[rId].tiktokConn === tiktokLiveConnection);
-                        if (!currentRoomId) return;
+                        if (!currentRoomId || !roomsData[currentRoomId]) return;
                         const room = roomsData[currentRoomId];
-                        if (room && room.gameState && room.gameState.gameType === 'tiktok_marathon') {
+                        
+                        const isRockets = room.gameState && room.gameState.gameType === 'tiktok_rockets';
+                        const isMarathon = room.gameState && room.gameState.gameType === 'tiktok_marathon';
+                        
+                        // التكبيس لا يعمل إلا في حرب الصواريخ والماراثون (توفيراً للبيانات والمعالجة)
+                        if (!isRockets && !isMarathon) return;
+
+                        data = flattenTikTokData(data, tiktokLiveConnection.availableGifts);
+                        if (isMarathon) {
                             handleMarathonLike(currentRoomId, data);
                             return;
                         }
@@ -2368,15 +2375,17 @@ function getGameTypeFromId(gameId) {
                     });
 
                     tiktokLiveConnection.on('share', data => {
-                        data = flattenTikTokData(data, tiktokLiveConnection.availableGifts);
                         const currentRoomId = Object.keys(roomsData).find(rId => roomsData[rId] && roomsData[rId].tiktokConn === tiktokLiveConnection);
-                        if (!currentRoomId) return;
+                        if (!currentRoomId || !roomsData[currentRoomId]) return;
                         const room = roomsData[currentRoomId];
-                        if (room && room.gameState && room.gameState.gameType === 'tiktok_marathon') {
-                            handleMarathonShare(currentRoomId, data);
-                            return;
-                        }
-                        io.to(roomName).emit('tiktok_share', data);
+                        
+                        const isMarathon = room.gameState && room.gameState.gameType === 'tiktok_marathon';
+                        
+                        // المشاركات لا تعمل إلا في الماراثون (توفيراً للبيانات والمعالجة)
+                        if (!isMarathon) return;
+
+                        data = flattenTikTokData(data, tiktokLiveConnection.availableGifts);
+                        handleMarathonShare(currentRoomId, data);
                     });
 
                     tiktokLiveConnection.on('streamEnd', (actionId) => {
