@@ -2189,32 +2189,33 @@ function getGameTypeFromId(gameId) {
                 },
                 () => {
                     console.log(`✅ تم الاتصال بنجاح ببث تويتش: #${username}`);
-                    const profilePic = 'https://ui-avatars.com/api/?name=' + username + '&background=6441a5&color=fff';
-                    const nickname = username;
+                    getTwitchAvatarWithCache(username).then(profilePic => {
+                        const nickname = username;
 
-                    if (roomsData[socket.id]) {
-                        roomsData[socket.id].twitchConn = conn;
-                        roomsData[socket.id].profilePic = profilePic;
-                        roomsData[socket.id].nickname = nickname;
-                        roomsData[socket.id].activationCode = socket.decodedToken?.code || null;
-                    } else {
-                        roomsData[socket.id] = {
-                            createdAt: Date.now(),
-                            gameState: { gameType: targetGameType },
-                            isTwitch: true,
-                            twitchUser: username,
-                            twitchConn: conn,
-                            timer: null,
-                            chatFilter: null,
-                            profilePic: profilePic,
-                            nickname: nickname,
-                            hostSocketId: socket.id,
-                            activationCode: socket.decodedToken?.code || null
-                        };
-                    }
-                    resetRoomTimer(socket.id);
-                    broadcastDashboardUpdate();
-                    io.to(roomName).emit('tiktok_connected', { profilePic, nickname });
+                        if (roomsData[socket.id]) {
+                            roomsData[socket.id].twitchConn = conn;
+                            roomsData[socket.id].profilePic = profilePic;
+                            roomsData[socket.id].nickname = nickname;
+                            roomsData[socket.id].activationCode = socket.decodedToken?.code || null;
+                        } else {
+                            roomsData[socket.id] = {
+                                createdAt: Date.now(),
+                                gameState: { gameType: targetGameType },
+                                isTwitch: true,
+                                twitchUser: username,
+                                twitchConn: conn,
+                                timer: null,
+                                chatFilter: null,
+                                profilePic: profilePic,
+                                nickname: nickname,
+                                hostSocketId: socket.id,
+                                activationCode: socket.decodedToken?.code || null
+                            };
+                        }
+                        resetRoomTimer(socket.id);
+                        broadcastDashboardUpdate();
+                        io.to(roomName).emit('tiktok_connected', { profilePic, nickname });
+                    });
                 },
                 () => {
                     io.to(roomName).emit('tiktok_disconnected', 'تم قطع الاتصال ببث تويتش.');
