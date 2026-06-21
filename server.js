@@ -578,6 +578,32 @@ function fetchKickChatroom(channelName) {
     });
 }
 
+const twitchAvatarCache = {};
+function fetchTwitchAvatar(username) {
+    return new Promise((resolve) => {
+        const url = `https://decapi.me/twitch/avatar/${encodeURIComponent(username)}`;
+        https.get(url, (res) => {
+            let data = '';
+            res.on('data', chunk => data += chunk);
+            res.on('end', () => {
+                if (res.statusCode === 200 && data.trim().startsWith('http')) {
+                    resolve(data.trim());
+                } else {
+                    resolve(`https://ui-avatars.com/api/?name=${encodeURIComponent(username)}&background=6441a5&color=fff`);
+                }
+            });
+        }).on('error', () => {
+            resolve(`https://ui-avatars.com/api/?name=${encodeURIComponent(username)}&background=6441a5&color=fff`);
+        });
+    });
+}
+async function getTwitchAvatarWithCache(username) {
+    if (twitchAvatarCache[username]) return twitchAvatarCache[username];
+    const url = await fetchTwitchAvatar(username);
+    twitchAvatarCache[username] = url;
+    return url;
+}
+
 // --- اتصال شات تويتش عبر الويب سوكت (Twitch Chat IRC Client) ---
 function connectTwitchChat(username, onChat, onConnected, onDisconnected, onError) {
     const channel = username.toLowerCase().replace('#', '').trim();
@@ -609,11 +635,13 @@ function connectTwitchChat(username, onChat, onConnected, onDisconnected, onErro
                     if (match) {
                         const sender = match[1];
                         const text = match[2];
-                        onChat({
-                            uniqueId: sender,
-                            nickname: sender,
-                            comment: text,
-                            profilePictureUrl: `https://decapi.me/twitch/avatar/${sender}`
+                        getTwitchAvatarWithCache(sender).then(avatarUrl => {
+                            onChat({
+                                uniqueId: sender,
+                                nickname: sender,
+                                comment: text,
+                                profilePictureUrl: avatarUrl
+                            });
                         });
                     }
                 }
