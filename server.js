@@ -613,7 +613,7 @@ function connectTwitchChat(username, onChat, onConnected, onDisconnected, onErro
                             uniqueId: sender,
                             nickname: sender,
                             comment: text,
-                            profilePictureUrl: `https://ui-avatars.com/api/?name=${encodeURIComponent(sender)}&background=6441a5&color=fff`
+                            profilePictureUrl: `https://decapi.me/twitch/avatar/${sender}`
                         });
                     }
                 }
