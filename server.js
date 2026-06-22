@@ -877,10 +877,11 @@ io.use((socket, next) => {
     if (token === 'free_tiktok_campaign_token') {
         socket.decodedToken = {
             type: 'tiktok',
-            client: 'ضيافة عرض المنتخب',
+            client: 'مستضيف البث',
+            platform: socket.handshake.auth?.platform || 'tiktok',
             expiry: Date.now() + 2 * 24 * 60 * 60 * 1000
         };
-        console.log(`[Socket Auth] Approved campaign token (Socket ID: ${socket.id})`);
+        console.log(`[Socket Auth] Approved campaign token (Socket ID: ${socket.id}, Platform: ${socket.decodedToken.platform})`);
         return next();
     }
 
