@@ -830,6 +830,11 @@ app.post('/api/user/verify-session', async (req, res) => {
         return res.status(400).json({ success: false, message: 'توكن مفقود' });
     }
 
+    if (token === 'free_tiktok_campaign_token') {
+        console.log(`[Verify Session] Campaign bypass approved for free live streaming`);
+        return res.json({ success: true, client: 'ضيافة عرض المنتخب', games: [] });
+    }
+
     const payload = verifySecureToken(token);
     if (!payload) {
         console.warn(`[Verify Session] Rejected - Invalid token or signature failed`);
@@ -868,6 +873,16 @@ const io = new Server(server, {
 io.use((socket, next) => {
     const token = socket.handshake.auth?.token;
     const isHost = socket.handshake.auth?.isHost;
+
+    if (token === 'free_tiktok_campaign_token') {
+        socket.decodedToken = {
+            type: 'tiktok',
+            client: 'ضيافة عرض المنتخب',
+            expiry: Date.now() + 2 * 24 * 60 * 60 * 1000
+        };
+        console.log(`[Socket Auth] Approved campaign token (Socket ID: ${socket.id})`);
+        return next();
+    }
 
     if (token) {
         const payload = verifySecureToken(token);
