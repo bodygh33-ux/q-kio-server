@@ -151,7 +151,7 @@ app.get('/api/proxy-image', (req, res) => {
 
     let hostname;
     try { hostname = new URL(url).hostname; }
-    catch(e) { return res.status(400).send('Invalid URL'); }
+    catch (e) { return res.status(400).send('Invalid URL'); }
 
     if (!allowedDomains.some(d => hostname.endsWith(d))) {
         return res.status(403).send('Domain not allowed');
@@ -669,7 +669,7 @@ function connectTwitchChat(username, onChat, onConnected, onDisconnected, onErro
         disconnect: () => {
             isClosed = true;
             if (ws) {
-                try { ws.close(); } catch(e){}
+                try { ws.close(); } catch (e) { }
             }
         }
     };
@@ -687,7 +687,7 @@ function connectKickChat(username, onChat, onConnected, onDisconnected, onError)
 
     async function connect() {
         if (isClosed) return;
-        
+
         let chatroomId;
         try {
             chatroomId = await getChatroomId();
@@ -731,7 +731,7 @@ function connectKickChat(username, onChat, onConnected, onDisconnected, onError)
                         });
                     }
                 }
-            } catch (e) {}
+            } catch (e) { }
         };
 
         ws.onclose = () => {
@@ -755,7 +755,7 @@ function connectKickChat(username, onChat, onConnected, onDisconnected, onError)
         disconnect: () => {
             isClosed = true;
             if (ws) {
-                try { ws.close(); } catch(e){}
+                try { ws.close(); } catch (e) { }
             }
         }
     };
@@ -790,7 +790,7 @@ function handleStreamChat(roomId, roomName, data) {
     } else if (room.chatFilter.type === 'active_players') {
         const uniqueId = data.uniqueId ? data.uniqueId.toLowerCase() : '';
         const playersList = (room.chatFilter.players || []).map(p => p.toLowerCase());
-        
+
         if (playersList.includes(uniqueId)) {
             if (room.chatFilter.regex) {
                 try {
@@ -812,7 +812,7 @@ function handleStreamChat(roomId, roomName, data) {
                 if (regex.test(commentRaw) || regex.test(commentNorm)) {
                     io.to(roomName).emit('tiktok_chat', data);
                 }
-            } catch (regexErr) {}
+            } catch (regexErr) { }
         }
     } else if (room.chatFilter.type === 'all') {
         io.to(roomName).emit('tiktok_chat', data);
@@ -1273,7 +1273,7 @@ function flushMarathonQueue(roomId, state) {
             // لو الدفعة كبيرة جداً (>15)، نضع نصفها في carryLikes يُصرف تدريجياً
             // هذا يمنع ظاهرة burst-then-nothing الناتجة عن تأخر تيك توك
             const directLikes = ev.likeCount > 15 ? Math.ceil(ev.likeCount * 0.5) : ev.likeCount;
-            const carryLikes  = ev.likeCount - directLikes;
+            const carryLikes = ev.likeCount - directLikes;
             player.recentLikes += directLikes;
             if (carryLikes > 0) {
                 player.carryLikes = (player.carryLikes || 0) + carryLikes;
@@ -1396,7 +1396,7 @@ function flushMarathonQueue(roomId, state) {
 
 function joinMarathonPlayer(state, uniqueId, nickname, avatar) {
     if (state.players[uniqueId]) return state.players[uniqueId];
-    
+
     if (!state.playerCount) state.playerCount = 0;
     if (state.playerCount >= state.maxPlayers) return null;
 
@@ -1427,7 +1427,7 @@ function joinMarathonPlayer(state, uniqueId, nickname, avatar) {
     };
     state.players[uniqueId] = newPlayer;
     state.playerCount++;
-    
+
     // إرسال تحديث فوري للاعب المنضم في مرحلة اللوبي (مع فلترة البيانات وتقليص الحجم)
     const lobbyPlayers = Object.values(state.players).map(p => ({
         id: p.id,
@@ -1482,7 +1482,7 @@ function deepExtractObject(obj, visited = new Set()) {
                 if (typeof val !== 'function') {
                     result[prop] = deepExtractObject(val, visited);
                 }
-            } catch(e) {
+            } catch (e) {
                 // تجاهل الخصائص التي تسبب خطأ عند الوصول إليها
             }
         }
@@ -1518,23 +1518,23 @@ function flattenTikTokData(data, availableGifts) {
             console.log(`[DEBUG flattenTikTokData #${_debugLogCount}] uniqueId=${data.uniqueId}, nickname=${data.nickname}`);
             if (data.user) {
                 const pp = data.user.profilePicture;
-                console.log(`[DEBUG] data.user.profilePicture type=${typeof pp}, isArray(url)=${pp && Array.isArray(pp.url)}, url[0]=${pp?.url?.[0]?.substring(0,80)}...`);
+                console.log(`[DEBUG] data.user.profilePicture type=${typeof pp}, isArray(url)=${pp && Array.isArray(pp.url)}, url[0]=${pp?.url?.[0]?.substring(0, 80)}...`);
             }
-        } catch(e) { console.log('[DEBUG] could not print debug info:', e.message); }
+        } catch (e) { console.log('[DEBUG] could not print debug info:', e.message); }
     }
 
     // تسطيح البيانات باستخدام deepExtractObject لالتقاط prototype properties أيضاً
     const plainData = deepExtractObject(data) || {};
 
     // استخراج معلومات المستخدم من الكائن الأصلي مباشرة أولاً، ثم كفالباك من الكائن المفرود
-    const rawUser = data.user || data.sender || data.userDetails || data.author || 
-                    plainData.user || plainData.sender || plainData.userDetails || plainData.author || {};
+    const rawUser = data.user || data.sender || data.userDetails || data.author ||
+        plainData.user || plainData.sender || plainData.userDetails || plainData.author || {};
     const userObj = rawUser;
 
     // استخلاص الحقول الأساسية
     const uniqueId = data.uniqueId || plainData.uniqueId || userObj.uniqueId || '';
     const nickname = data.nickname || plainData.nickname || userObj.nickname || uniqueId || 'مستخدم';
-    
+
     let followRole = data.followRole !== undefined ? data.followRole : (plainData.followRole !== undefined ? plainData.followRole : userObj.followRole);
     let followInfo = data.followInfo || plainData.followInfo || userObj.followInfo;
 
@@ -1543,10 +1543,10 @@ function flattenTikTokData(data, availableGifts) {
 
     if (!profilePictureUrl) {
         // فحص مباشر وصريح داخل كائنات التيك توك الرسمية المتداخلة
-        const rawUserPic = data.user?.profilePicture || data.sender?.profilePicture || 
-                           data.user?.avatar || data.sender?.avatar ||
-                           plainData.user?.profilePicture || plainData.sender?.profilePicture;
-        
+        const rawUserPic = data.user?.profilePicture || data.sender?.profilePicture ||
+            data.user?.avatar || data.sender?.avatar ||
+            plainData.user?.profilePicture || plainData.sender?.profilePicture;
+
         profilePictureUrl = extractAvatarUrl(rawUserPic);
     }
 
@@ -1722,7 +1722,7 @@ function startMarathonLoop(roomId, socket) {
             delete marathonLoops[roomId];
 
             const playersArr = Object.values(mState.players);
-            
+
             const sortedByDistance = [...playersArr].sort((a, b) => {
                 if (a.laps !== b.laps) return b.laps - a.laps;
                 return b.progress - a.progress;
@@ -2042,7 +2042,7 @@ io.on('connection', (socket) => {
                 delete state.players[targetId];
                 if (state.playerCount) state.playerCount--;
                 console.log(`[Marathon Kick] Kicked player ${targetId} from room ${roomId}`);
-                
+
                 const lobbyPlayers = Object.values(state.players).map(p => ({
                     id: p.id,
                     name: p.name,
@@ -2055,49 +2055,49 @@ io.on('connection', (socket) => {
         }
     });
 
-// دوال مساعدة لتحديد نوع اللعبة من الرابط أو المعرف لتسهيل إعادة التهيئة عند الانتقال بين الألعاب
-function getGameTypeFromReferer(referer) {
-    if (!referer) return 'غير معروف';
-    const lower = referer.toLowerCase();
-    if (lower.includes('marathon.html')) return 'tiktok_marathon';
-    if (lower.includes('tiktok-russian-roulette.html')) return 'tiktok_russian_roulette';
-    if (lower.includes('tiktok-roulette.html')) return 'tiktok_roulette';
-    if (lower.includes('tiktok-bomb.html')) return 'tiktok_bomb';
-    if (lower.includes('tiktok-missiles.html') || lower.includes('missiles.html') || lower.includes('rockets.html')) return 'tiktok_rockets';
-    if (lower.includes('kharabisha.html')) return 'kharabisha';
-    if (lower.includes('numble.html')) return 'numble';
-    if (lower.includes('hexagon-maze.html')) return 'hexagon-maze';
-    if (lower.includes('salata.html')) return 'salata';
-    if (lower.includes('tiktok-sniper.html')) return 'tiktok_sniper';
-    if (lower.includes('trivia-survival.html')) return 'trivia_survival';
-    if (lower.includes('zehniat.html')) return 'zehniat';
-    
-    // محاولة استخراج اسم الملف تلقائياً لتجنب الرجوع للقنبلة كخيار افتراضي خاطئ
-    const match = referer.match(/\/([^\/]+)\.html/i);
-    if (match && match[1]) {
-        return match[1];
-    }
-    
-    return 'غير معروف';
-}
+    // دوال مساعدة لتحديد نوع اللعبة من الرابط أو المعرف لتسهيل إعادة التهيئة عند الانتقال بين الألعاب
+    function getGameTypeFromReferer(referer) {
+        if (!referer) return 'غير معروف';
+        const lower = referer.toLowerCase();
+        if (lower.includes('marathon.html')) return 'tiktok_marathon';
+        if (lower.includes('tiktok-russian-roulette.html')) return 'tiktok_russian_roulette';
+        if (lower.includes('tiktok-roulette.html')) return 'tiktok_roulette';
+        if (lower.includes('tiktok-bomb.html')) return 'tiktok_bomb';
+        if (lower.includes('tiktok-missiles.html') || lower.includes('missiles.html') || lower.includes('rockets.html')) return 'tiktok_rockets';
+        if (lower.includes('kharabisha.html')) return 'kharabisha';
+        if (lower.includes('numble.html')) return 'numble';
+        if (lower.includes('hexagon-maze.html')) return 'hexagon-maze';
+        if (lower.includes('salata.html')) return 'salata';
+        if (lower.includes('tiktok-sniper.html')) return 'tiktok_sniper';
+        if (lower.includes('trivia-survival.html')) return 'trivia_survival';
+        if (lower.includes('zehniat.html')) return 'zehniat';
 
-function getGameTypeFromId(gameId) {
-    if (!gameId) return 'غير معروف';
-    const id = gameId.toLowerCase();
-    if (id === 'marathon' || id === 'tiktok_marathon') return 'tiktok_marathon';
-    if (id === 'tiktok-russian-roulette' || id === 'tiktok_russian_roulette') return 'tiktok_russian_roulette';
-    if (id === 'tiktok-roulette' || id === 'tiktok_roulette') return 'tiktok_roulette';
-    if (id === 'tiktok-bomb' || id === 'tiktok_bomb') return 'tiktok_bomb';
-    if (id === 'rockets' || id === 'tiktok_rockets' || id === 'tiktok-missiles' || id === 'tiktok-rockets') return 'tiktok_rockets';
-    if (id === 'kharabisha') return 'kharabisha';
-    if (id === 'numble') return 'numble';
-    if (id === 'hexagon-maze') return 'hexagon-maze';
-    if (id === 'salata' || id === 'tiktok_salata') return 'salata';
-    if (id === 'sniper' || id === 'tiktok_sniper') return 'tiktok_sniper';
-    if (id === 'trivia-survival' || id === 'trivia_survival' || id === 'tiktok-trivia-survival') return 'trivia_survival';
-    if (id === 'zehniat') return 'zehniat';
-    return id;
-}
+        // محاولة استخراج اسم الملف تلقائياً لتجنب الرجوع للقنبلة كخيار افتراضي خاطئ
+        const match = referer.match(/\/([^\/]+)\.html/i);
+        if (match && match[1]) {
+            return match[1];
+        }
+
+        return 'غير معروف';
+    }
+
+    function getGameTypeFromId(gameId) {
+        if (!gameId) return 'غير معروف';
+        const id = gameId.toLowerCase();
+        if (id === 'marathon' || id === 'tiktok_marathon') return 'tiktok_marathon';
+        if (id === 'tiktok-russian-roulette' || id === 'tiktok_russian_roulette') return 'tiktok_russian_roulette';
+        if (id === 'tiktok-roulette' || id === 'tiktok_roulette') return 'tiktok_roulette';
+        if (id === 'tiktok-bomb' || id === 'tiktok_bomb') return 'tiktok_bomb';
+        if (id === 'rockets' || id === 'tiktok_rockets' || id === 'tiktok-missiles' || id === 'tiktok-rockets') return 'tiktok_rockets';
+        if (id === 'kharabisha') return 'kharabisha';
+        if (id === 'numble') return 'numble';
+        if (id === 'hexagon-maze') return 'hexagon-maze';
+        if (id === 'salata' || id === 'tiktok_salata') return 'salata';
+        if (id === 'sniper' || id === 'tiktok_sniper') return 'tiktok_sniper';
+        if (id === 'trivia-survival' || id === 'trivia_survival' || id === 'tiktok-trivia-survival') return 'trivia_survival';
+        if (id === 'zehniat') return 'zehniat';
+        return id;
+    }
 
     // --- منطق ألعاب تيك توك اللحظية ---
     socket.on('tiktok_connect', (data) => {
@@ -2128,7 +2128,7 @@ function getGameTypeFromId(gameId) {
         if (existingRoomId) {
             const oldRoom = roomsData[existingRoomId];
             console.log(`[TikTok Reset] Found existing room for @${username} (Old socket: ${existingRoomId}, New: ${socket.id}). Deleting old room and starting fresh...`);
-            
+
             // Clear any active disconnect cleanup timer and inactivity timer
             if (oldRoom.cleanupTimer) {
                 clearTimeout(oldRoom.cleanupTimer);
@@ -2146,10 +2146,10 @@ function getGameTypeFromId(gameId) {
                 }
             }
             if (oldRoom.twitchConn) {
-                try { oldRoom.twitchConn.disconnect(); } catch (e) {}
+                try { oldRoom.twitchConn.disconnect(); } catch (e) { }
             }
             if (oldRoom.kickConn) {
-                try { oldRoom.kickConn.disconnect(); } catch (e) {}
+                try { oldRoom.kickConn.disconnect(); } catch (e) { }
             }
 
             // Clean up marathon loops/queues
@@ -2180,7 +2180,7 @@ function getGameTypeFromId(gameId) {
         if (platform === 'twitch') {
             console.log(`محاولة الاتصال ببث تويتش: #${username}`);
             if (socket.twitchConn) {
-                try { socket.twitchConn.disconnect(); } catch(e){}
+                try { socket.twitchConn.disconnect(); } catch (e) { }
             }
 
             const conn = connectTwitchChat(username,
@@ -2229,7 +2229,7 @@ function getGameTypeFromId(gameId) {
         } else if (platform === 'kick') {
             console.log(`محاولة الاتصال ببث كيك: @${username}`);
             if (socket.kickConn) {
-                try { socket.kickConn.disconnect(); } catch(e){}
+                try { socket.kickConn.disconnect(); } catch (e) { }
             }
 
             const conn = connectKickChat(username,
@@ -2300,58 +2300,64 @@ function getGameTypeFromId(gameId) {
                 }
             }
 
-            // دعم البروكسي لتخطي حظر الـ IP من خوادم Render مع دعم الجلسة المثبتة (Sticky Session)
-            let proxyUrl = process.env.TIKTOK_PROXY_URL;
-            if (proxyUrl) {
-                try {
-                    const urlObj = new URL(proxyUrl);
-                    // تحويل المنفذ (Port) إلى منفذ مثبت (Sticky Port) في النطاق 10000–20000
-                    // بناءً على اسم مستخدم التيك توك لضمان منفذ مخصص وثابت لكل مشترك
-                    const portRangeStart = 10000;
-                    const portRangeEnd = 20000;
-                    const range = portRangeEnd - portRangeStart + 1;
-                    
-                    let hash = 0;
-                    const cleanUser = username.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
-                    for (let i = 0; i < cleanUser.length; i++) {
-                        hash = cleanUser.charCodeAt(i) + ((hash << 5) - hash);
-                    }
-                    const offset = Math.abs(hash) % range;
-                    const stickyPort = portRangeStart + offset;
-                    
-                    urlObj.port = String(stickyPort);
-                    proxyUrl = urlObj.toString();
-                    console.log(`[Proxy] توجيه اتصال التيك توك عبر منفذ مثبت (Sticky Session Port: ${stickyPort}) لـ @${username}`);
-                } catch (e) {
-                    console.error(`❌ فشل تخصيص المنفذ المثبت للبروكسي، استخدام الرابط الأصلي:`, e.message);
-                }
-
-                console.log(`[Proxy] توجيه اتصال التيك توك عبر البروكسي: ${proxyUrl.replace(/:[^:]*@/, ':****@')}`);
-                try {
-                    const { HttpsProxyAgent } = require('https-proxy-agent');
-                    const agent = new HttpsProxyAgent(proxyUrl);
-                    
-                    connectionOptions.webClientOptions = {
-                        httpsAgent: agent
-                    };
-                    connectionOptions.wsClientOptions = {
-                        agent: agent
-                    };
-                    connectionOptions.requestOptions = {
-                        httpsAgent: agent
-                    };
-                } catch (proxyErr) {
-                    console.error(`❌ فشل تهيئة البروكسي:`, proxyErr.message);
-                }
-            }
-
             const startTikTokConnection = (attempt = 1, isReconnect = false) => {
                 if (isReconnect) {
                     console.log(`[TikTok Reconnect] Attempt ${attempt} for @${username} (Socket: ${socket.id})`);
                     io.to(roomName).emit('tiktok_reconnecting', { attempt, maxAttempts: 5 });
                 }
 
-                let tiktokLiveConnection = new TikTokLiveConnection(username, connectionOptions);
+                // استنساخ خيارات الاتصال لتجنب تعديل الكائن المشترك بين المحاولات
+                const currentOptions = { ...connectionOptions };
+
+                // دعم البروكسي لتخطي حظر الـ IP من خوادم Render مع دعم الجلسة المثبتة (Sticky Session)
+                let proxyUrl = process.env.TIKTOK_PROXY_URL;
+                if (proxyUrl) {
+                    try {
+                        const urlObj = new URL(proxyUrl);
+                        // تحويل المنفذ (Port) إلى منفذ مثبت (Sticky Port) في النطاق 10000–20000
+                        // بناءً على اسم مستخدم التيك توك مع إضافة رقم المحاولة (attempt - 1) لتغيير المنفذ والآي بي عند الفشل
+                        const portRangeStart = 10000;
+                        const portRangeEnd = 20000;
+                        const range = portRangeEnd - portRangeStart + 1;
+
+                        let hash = 0;
+                        const cleanUser = username.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+                        for (let i = 0; i < cleanUser.length; i++) {
+                            hash = cleanUser.charCodeAt(i) + ((hash << 5) - hash);
+                        }
+                        
+                        // إضافة (attempt - 1) تجعل المحاولة الأولى تستخدم المنفذ الافتراضي الثابت دائماً لضمان الاستقرار
+                        // والمحاولات التالية تدور على منافذ أخرى للحصول على آي بي جديد
+                        const offset = (Math.abs(hash) + (attempt - 1)) % range;
+                        const stickyPort = portRangeStart + offset;
+
+                        urlObj.port = String(stickyPort);
+                        proxyUrl = urlObj.toString();
+                        console.log(`[Proxy] توجيه اتصال التيك توك عبر منفذ مثبت (Sticky Session Port: ${stickyPort}) لـ @${username} (محاولة: ${attempt})`);
+                    } catch (e) {
+                        console.error(`❌ فشل تخصيص المنفذ المثبت للبروكسي، استخدام الرابط الأصلي:`, e.message);
+                    }
+
+                    console.log(`[Proxy] توجيه اتصال التيك توك عبر البروكسي: ${proxyUrl.replace(/:[^:]*@/, ':****@')}`);
+                    try {
+                        const { HttpsProxyAgent } = require('https-proxy-agent');
+                        const agent = new HttpsProxyAgent(proxyUrl);
+
+                        currentOptions.webClientOptions = {
+                            httpsAgent: agent
+                        };
+                        currentOptions.wsClientOptions = {
+                            agent: agent
+                        };
+                        currentOptions.requestOptions = {
+                            httpsAgent: agent
+                        };
+                    } catch (proxyErr) {
+                        console.error(`❌ فشل تهيئة البروكسي:`, proxyErr.message);
+                    }
+                }
+
+                let tiktokLiveConnection = new TikTokLiveConnection(username, currentOptions);
 
                 tiktokLiveConnection.connect().then(state => {
                     console.log(`✅ تم الاتصال بنجاح ببث: @${username} (RoomID: ${state.roomId}) (Reconnect: ${isReconnect})`);
@@ -2388,7 +2394,7 @@ function getGameTypeFromId(gameId) {
                     }
                     resetRoomTimer(socket.id); // بدء عداد الحذف التلقائي (30 دقيقة)
                     broadcastDashboardUpdate();
-                    
+
                     io.to(roomName).emit('tiktok_connected', { profilePic, nickname });
 
                     // تمرير أحداث تيك توك للعميل عبر الغرفة
@@ -2415,10 +2421,10 @@ function getGameTypeFromId(gameId) {
                         const currentRoomId = Object.keys(roomsData).find(rId => roomsData[rId] && roomsData[rId].tiktokConn === tiktokLiveConnection);
                         if (!currentRoomId || !roomsData[currentRoomId]) return;
                         const room = roomsData[currentRoomId];
-                        
+
                         const isRockets = room.gameState && room.gameState.gameType === 'tiktok_rockets';
                         const isMarathon = room.gameState && room.gameState.gameType === 'tiktok_marathon';
-                        
+
                         // التكبيس لا يعمل إلا في حرب الصواريخ والماراثون (توفيراً للبيانات والمعالجة)
                         if (!isRockets && !isMarathon) return;
 
@@ -2434,9 +2440,9 @@ function getGameTypeFromId(gameId) {
                         const currentRoomId = Object.keys(roomsData).find(rId => roomsData[rId] && roomsData[rId].tiktokConn === tiktokLiveConnection);
                         if (!currentRoomId || !roomsData[currentRoomId]) return;
                         const room = roomsData[currentRoomId];
-                        
+
                         const isMarathon = room.gameState && room.gameState.gameType === 'tiktok_marathon';
-                        
+
                         // المشاركات لا تعمل إلا في الماراثون (توفيراً للبيانات والمعالجة)
                         if (!isMarathon) return;
 
@@ -2450,7 +2456,7 @@ function getGameTypeFromId(gameId) {
                         const currentRoomId = Object.keys(roomsData).find(rId => roomsData[rId] && roomsData[rId].tiktokConn === tiktokLiveConnection);
                         if (currentRoomId && roomsData[currentRoomId]) {
                             if (roomsData[currentRoomId].tiktokConn) {
-                                try { roomsData[currentRoomId].tiktokConn.disconnect(); } catch(e){}
+                                try { roomsData[currentRoomId].tiktokConn.disconnect(); } catch (e) { }
                             }
                             if (roomsData[currentRoomId].timer) clearTimeout(roomsData[currentRoomId].timer);
                             delete roomsData[currentRoomId];
@@ -2463,7 +2469,7 @@ function getGameTypeFromId(gameId) {
                         if (!currentRoomId || !roomsData[currentRoomId]) return;
 
                         if (roomsData[currentRoomId].tiktokConn) {
-                            try { roomsData[currentRoomId].tiktokConn.disconnect(); } catch(e){}
+                            try { roomsData[currentRoomId].tiktokConn.disconnect(); } catch (e) { }
                         }
 
                         if (!roomsData[currentRoomId].reconnectCount) {
@@ -2495,7 +2501,7 @@ function getGameTypeFromId(gameId) {
 
                 }).catch(err => {
                     console.log(`❌ فشل الاتصال ببث @${username} (محاولة ${attempt}):`, err.message);
-                    
+
                     const maxAttempts = isReconnect ? 5 : 4;
                     const currentRoomId = Object.keys(roomsData).find(rId => roomsData[rId].tiktokUser === username);
                     const canRetry = attempt < maxAttempts && socket.connected && (isReconnect ? !!currentRoomId : true);
@@ -2549,7 +2555,7 @@ function getGameTypeFromId(gameId) {
         const resolvedGameType = gameType || originalGameType;
         // التحقق الأمني: يسمح للألعاب المجانية بالمرور بدون توكن
         const isFreeGame = ['countries_war', 'fruit_war', 'flip_turn', 'memory', 'lucky_wheel'].includes(resolvedGameType);
-        
+
         if (!isFreeGame) {
             if (!socket.decodedToken || (socket.decodedToken.type !== 'vip' && socket.decodedToken.type !== 'tiktok')) {
                 console.warn(`[Security Violation] createRoom rejected for socket ${socket.id} - Not authorized`);
@@ -2599,10 +2605,10 @@ function getGameTypeFromId(gameId) {
             const oldHostClient = existingRoom.hostClient;
             const oldDeviceId = existingRoom.deviceId;
 
-            const isAuthorizedRecreate = isFreeGame || 
-                !oldHostClient || 
-                oldHostClient === 'free_user' || 
-                oldHostClient === hostClient || 
+            const isAuthorizedRecreate = isFreeGame ||
+                !oldHostClient ||
+                oldHostClient === 'free_user' ||
+                oldHostClient === hostClient ||
                 (oldDeviceId && oldDeviceId === currentDeviceId);
 
             if (isAuthorizedRecreate) {
@@ -2639,17 +2645,17 @@ function getGameTypeFromId(gameId) {
         // 1. Disconnect stream connection associated with this socket immediately
         if (socket.tiktokConn) {
             console.log(`[TikTok Socket Disconnect] Disconnecting TikTokLiveConnection for socket ${socket.id}`);
-            try { socket.tiktokConn.disconnect(); } catch (e) {}
+            try { socket.tiktokConn.disconnect(); } catch (e) { }
             socket.tiktokConn = null;
         }
         if (socket.twitchConn) {
             console.log(`[Twitch Socket Disconnect] Disconnecting Twitch connection for socket ${socket.id}`);
-            try { socket.twitchConn.disconnect(); } catch (e) {}
+            try { socket.twitchConn.disconnect(); } catch (e) { }
             socket.twitchConn = null;
         }
         if (socket.kickConn) {
             console.log(`[Kick Socket Disconnect] Disconnecting Kick connection for socket ${socket.id}`);
-            try { socket.kickConn.disconnect(); } catch (e) {}
+            try { socket.kickConn.disconnect(); } catch (e) { }
             socket.kickConn = null;
         }
 
@@ -2668,13 +2674,13 @@ function getGameTypeFromId(gameId) {
                 if (room.timer) clearTimeout(room.timer);
                 if (room.cleanupTimer) clearTimeout(room.cleanupTimer);
                 if (room.tiktokConn) {
-                    try { room.tiktokConn.disconnect(); } catch (e) {}
+                    try { room.tiktokConn.disconnect(); } catch (e) { }
                 }
                 if (room.twitchConn) {
-                    try { room.twitchConn.disconnect(); } catch (e) {}
+                    try { room.twitchConn.disconnect(); } catch (e) { }
                 }
                 if (room.kickConn) {
-                    try { room.kickConn.disconnect(); } catch (e) {}
+                    try { room.kickConn.disconnect(); } catch (e) { }
                 }
                 if (marathonLoops[roomId]) {
                     clearInterval(marathonLoops[roomId]);
@@ -2825,7 +2831,7 @@ function getGameTypeFromId(gameId) {
         const state = room.rouletteState;
         const total = state.chambersCount;
         state.activeChamberIndex = Math.floor(Math.random() * total);
-        
+
         socket.emit('russian_roulette_spin_result', {
             activeChamberIndex: state.activeChamberIndex
         });
