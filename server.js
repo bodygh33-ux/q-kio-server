@@ -2371,7 +2371,7 @@ io.on('connection', (socket) => {
                     console.log(`[Proxy] توجيه اتصال التيك توك عبر البروكسي: ${proxyUrl.replace(/:[^:]*@/, ':****@')}`);
                     try {
                         const { HttpsProxyAgent } = require('https-proxy-agent');
-                        const agent = new HttpsProxyAgent(proxyUrl);
+                        const agent = new HttpsProxyAgent(proxyUrl, { keepAlive: true });
 
                         currentOptions.webClientOptions = {
                             httpsAgent: agent
