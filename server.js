@@ -1650,6 +1650,36 @@ function flattenTikTokData(data, availableGifts) {
         }
     }
 
+    // توحيد وتنظيف أسماء الهدايا الشائعة لدعم اللغات المختلفة (خاصة العربية والانجليزية) وتفادي مشاكل المطابقة
+    if (giftName) {
+        const nameLower = giftName.toLowerCase();
+        if (nameLower.includes('قبعة وشارب') || nameLower.includes('شارب') || nameLower.includes('mustache') || nameLower.includes('hat')) {
+            giftName = 'Hat and Mustache';
+        } else if (nameLower.includes('corgi') || nameLower.includes('كورجي')) {
+            giftName = 'Corgi';
+        } else if (nameLower.includes('perfume') || nameLower.includes('عطر')) {
+            giftName = 'Perfume';
+        } else if (nameLower.includes('mini star') || nameLower.includes('نجمة صغيرة') || nameLower.includes('نجمه صغيره')) {
+            giftName = 'Mini Star';
+        } else if (nameLower.includes('rose') || nameLower.includes('ورد')) {
+            giftName = 'Rose';
+        } else if (nameLower.includes('ice cream') || nameLower.includes('أيس كريم') || nameLower.includes('ايس كريم')) {
+            giftName = 'Ice Cream';
+        } else if (nameLower.includes('finger heart') || nameLower.includes('قلب إصبع') || nameLower.includes('قلب اصبع')) {
+            giftName = 'Finger Heart';
+        } else if (nameLower.includes('hand heart') || nameLower.includes('قلب باليدين') || nameLower.includes('القلب باليدين') || nameLower.includes('قلب اليد')) {
+            giftName = 'Hand Heart';
+        } else if (nameLower.includes('doughnut') || nameLower.includes('دونات')) {
+            giftName = 'Doughnut';
+        } else if (nameLower.includes('heart') || nameLower.includes('قلب')) {
+            giftName = 'Heart';
+        } else if (nameLower.includes('gamepad') || nameLower.includes('جهاز ألعاب') || nameLower.includes('جهاز العاب')) {
+            giftName = 'Gamepad';
+        } else if (nameLower.includes('gg')) {
+            giftName = 'GG';
+        }
+    }
+
     // بناء الكائن النهائي المفرود مع الحفاظ على باقي الخصائص الأصلية
     const result = {
         ...plainData,
