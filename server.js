@@ -2407,9 +2407,10 @@ io.on('connection', (socket) => {
             }
 
             const startTikTokConnection = (attempt = 1, isReconnect = false) => {
-                if (isReconnect) {
-                    console.log(`[TikTok Reconnect] Attempt ${attempt} for @${username} (Socket: ${socket.id})`);
-                    io.to(roomName).emit('tiktok_reconnecting', { attempt, maxAttempts: 5 });
+                const maxAttempts = isReconnect ? 5 : 4;
+                if (isReconnect || attempt > 1) {
+                    console.log(`[TikTok Connect/Reconnect] Attempt ${attempt}/${maxAttempts} for @${username} (Socket: ${socket.id})`);
+                    io.to(roomName).emit('tiktok_reconnecting', { attempt, maxAttempts });
                 }
 
                 // استنساخ خيارات الاتصال لتجنب تعديل الكائن المشترك بين المحاولات
@@ -2422,24 +2423,28 @@ io.on('connection', (socket) => {
                         const urlObj = new URL(proxyUrl);
                         // تحويل المنفذ (Port) إلى منفذ مثبت (Sticky Port) في النطاق 10000–20000
                         // بناءً على اسم مستخدم التيك توك مع إضافة رقم المحاولة (attempt - 1) لتغيير المنفذ والآي بي عند الفشل
-                        const portRangeStart = 10000;
-                        const portRangeEnd = 20000;
-                        const range = portRangeEnd - portRangeStart + 1;
+                        if (process.env.TIKTOK_PROXY_PORT_SHIFT !== 'false') {
+                            const portRangeStart = 10000;
+                            const portRangeEnd = 20000;
+                            const range = portRangeEnd - portRangeStart + 1;
 
-                        let hash = 0;
-                        const cleanUser = username.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
-                        for (let i = 0; i < cleanUser.length; i++) {
-                            hash = cleanUser.charCodeAt(i) + ((hash << 5) - hash);
+                            let hash = 0;
+                            const cleanUser = username.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+                            for (let i = 0; i < cleanUser.length; i++) {
+                                hash = cleanUser.charCodeAt(i) + ((hash << 5) - hash);
+                            }
+                            
+                            // إضافة (attempt - 1) تجعل المحاولة الأولى تستخدم المنفذ الافتراضي الثابت دائماً لضمان الاستقرار
+                            // والمحاولات التالية تدور على منافذ أخرى للحصول على آي بي جديد
+                            const offset = (Math.abs(hash) + (attempt - 1)) % range;
+                            const stickyPort = portRangeStart + offset;
+
+                            urlObj.port = String(stickyPort);
+                            proxyUrl = urlObj.toString();
+                            console.log(`[Proxy] توجيه اتصال التيك توك عبر منفذ مثبت (Sticky Session Port: ${stickyPort}) لـ @${username} (محاولة: ${attempt})`);
+                        } else {
+                            console.log(`[Proxy] استخدام منفذ البروكسي الأصلي: ${urlObj.port} لـ @${username}`);
                         }
-                        
-                        // إضافة (attempt - 1) تجعل المحاولة الأولى تستخدم المنفذ الافتراضي الثابت دائماً لضمان الاستقرار
-                        // والمحاولات التالية تدور على منافذ أخرى للحصول على آي بي جديد
-                        const offset = (Math.abs(hash) + (attempt - 1)) % range;
-                        const stickyPort = portRangeStart + offset;
-
-                        urlObj.port = String(stickyPort);
-                        proxyUrl = urlObj.toString();
-                        console.log(`[Proxy] توجيه اتصال التيك توك عبر منفذ مثبت (Sticky Session Port: ${stickyPort}) لـ @${username} (محاولة: ${attempt})`);
                     } catch (e) {
                         console.error(`❌ فشل تخصيص المنفذ المثبت للبروكسي، استخدام الرابط الأصلي:`, e.message);
                     }
@@ -2465,7 +2470,20 @@ io.on('connection', (socket) => {
 
                 let tiktokLiveConnection = new TikTokLiveConnection(username, currentOptions);
 
-                tiktokLiveConnection.connect().then(state => {
+                // تحديد وقت أقصى للمحاولة لمنع التعليق اللانهائي في صمت
+                const timeoutLimit = 15000;
+                let timeoutId;
+                const timeoutPromise = new Promise((_, reject) => {
+                    timeoutId = setTimeout(() => {
+                        reject(new Error('انتهت مهلة محاولة الاتصال بالبث المباشر (Timeout)'));
+                    }, timeoutLimit);
+                });
+
+                Promise.race([
+                    tiktokLiveConnection.connect(),
+                    timeoutPromise
+                ]).then(state => {
+                    clearTimeout(timeoutId);
                     console.log(`✅ تم الاتصال بنجاح ببث: @${username} (RoomID: ${state.roomId}) (Reconnect: ${isReconnect})`);
 
                     const owner = state.roomInfo?.data?.owner || state.roomInfo?.owner;
@@ -2608,9 +2626,9 @@ io.on('connection', (socket) => {
                     socket.tiktokConn = tiktokLiveConnection;
 
                 }).catch(err => {
+                    clearTimeout(timeoutId);
                     console.log(`❌ فشل الاتصال ببث @${username} (محاولة ${attempt}):`, err.message);
 
-                    const maxAttempts = isReconnect ? 5 : 4;
                     const currentRoomId = Object.keys(roomsData).find(rId => roomsData[rId] && roomsData[rId].tiktokUser === username);
                     const canRetry = attempt < maxAttempts && socket.connected && (isReconnect ? !!currentRoomId : true);
 
