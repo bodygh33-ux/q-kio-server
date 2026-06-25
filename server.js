@@ -144,9 +144,9 @@ app.get('/api/proxy-image', (req, res) => {
     if (!url) return res.status(400).send('Missing url');
 
     const allowedDomains = [
-        'tiktokcdn.com', 'tiktok.com', 'muscdn.com',
-        'byteoversea.com', 'ibytedtos.com', 'akamaized.net',
-        'ibyteimg.com', 'byteimg.com', 'ipstatp.com'
+        'tiktokcdn.com', 'tiktokcdn-us.com', 'tiktok.com', 'muscdn.com',
+        'byteoversea.com', 'ibytedtos.com', 'ibytetos.com', 'akamaized.net',
+        'ibyteimg.com', 'byteimg.com', 'ipstatp.com', 'pstatp.com'
     ];
 
     let hostname;
