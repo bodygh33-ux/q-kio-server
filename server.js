@@ -2611,7 +2611,7 @@ io.on('connection', (socket) => {
                     console.log(`❌ فشل الاتصال ببث @${username} (محاولة ${attempt}):`, err.message);
 
                     const maxAttempts = isReconnect ? 5 : 4;
-                    const currentRoomId = Object.keys(roomsData).find(rId => roomsData[rId].tiktokUser === username);
+                    const currentRoomId = Object.keys(roomsData).find(rId => roomsData[rId] && roomsData[rId].tiktokUser === username);
                     const canRetry = attempt < maxAttempts && socket.connected && (isReconnect ? !!currentRoomId : true);
 
                     if (canRetry) {
