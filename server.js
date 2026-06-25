@@ -895,7 +895,7 @@ function broadcastDashboardUpdate() {
     const activeRooms = {};
     for (const id in roomsData) {
         const state = roomsData[id].gameState || {};
-        const gType = state.gameType || state.type || "غير معروف";
+        const gType = roomsData[id].gameType || state.gameType || state.type || "غير معروف";
 
         activeRooms[id] = {
             playerCount: io.sockets.adapter.rooms.get(id)?.size || 0,
@@ -2291,10 +2291,12 @@ io.on('connection', (socket) => {
                             roomsData[socket.id].twitchConn = conn;
                             roomsData[socket.id].profilePic = profilePic;
                             roomsData[socket.id].nickname = nickname;
+                            roomsData[socket.id].gameType = targetGameType;
                             roomsData[socket.id].activationCode = socket.decodedToken?.code || null;
                         } else {
                             roomsData[socket.id] = {
                                 createdAt: Date.now(),
+                                gameType: targetGameType,
                                 gameState: { gameType: targetGameType },
                                 isTwitch: true,
                                 twitchUser: username,
@@ -2340,10 +2342,12 @@ io.on('connection', (socket) => {
                         roomsData[socket.id].kickConn = conn;
                         roomsData[socket.id].profilePic = profilePic;
                         roomsData[socket.id].nickname = nickname;
+                        roomsData[socket.id].gameType = targetGameType;
                         roomsData[socket.id].activationCode = socket.decodedToken?.code || null;
                     } else {
                         roomsData[socket.id] = {
                             createdAt: Date.now(),
+                            gameType: targetGameType,
                             gameState: { gameType: targetGameType },
                             isKick: true,
                             kickUser: username,
@@ -2470,10 +2474,12 @@ io.on('connection', (socket) => {
                         roomsData[socket.id].nickname = nickname;
                         roomsData[socket.id].hostSocketId = socket.id; // تعيين معرف سوكت الهوست لتجنب التحذيرات الأمنية
                         roomsData[socket.id].reconnectCount = 0; // تصفير العداد عند نجاح الاتصال والاستقرار
+                        roomsData[socket.id].gameType = targetGameType;
                         roomsData[socket.id].activationCode = socket.decodedToken?.code || null;
                     } else {
                         roomsData[socket.id] = {
                             createdAt: Date.now(),
+                            gameType: targetGameType,
                             gameState: { gameType: targetGameType },
                             isTikTok: true,
                             tiktokUser: username,
@@ -2694,6 +2700,7 @@ io.on('connection', (socket) => {
         if (!existingRoom) {
             roomsData[roomId] = {
                 createdAt: Date.now(),
+                gameType: resolvedGameType,
                 gameState: { gameType: resolvedGameType },
                 timer: null,
                 hostSocketId: socket.id, // تسجيل معرف سوكت الهوست للتحقق اللاحق
@@ -2719,7 +2726,8 @@ io.on('connection', (socket) => {
                 existingRoom.hostClient = hostClient;
                 existingRoom.deviceId = currentDeviceId;
                 existingRoom.activationCode = socket.decodedToken?.code || null;
-                if (resolvedGameType && (!existingRoom.gameState || !existingRoom.gameState.gameType)) {
+                if (resolvedGameType) {
+                    existingRoom.gameType = resolvedGameType;
                     if (!existingRoom.gameState) existingRoom.gameState = {};
                     existingRoom.gameState.gameType = resolvedGameType;
                 }
@@ -2819,7 +2827,14 @@ io.on('connection', (socket) => {
 
             resetRoomTimer(data.room);
             if (data.event === 'saveState') {
-                room.gameState = data.payload;
+                const oldGameType = room.gameType || (room.gameState ? (room.gameState.gameType || room.gameState.type) : null);
+                room.gameState = data.payload || {};
+                if (oldGameType) {
+                    room.gameType = oldGameType;
+                    if (!room.gameState.gameType && !room.gameState.type) {
+                        room.gameState.gameType = oldGameType;
+                    }
+                }
             }
             socket.to(data.room).emit(data.event, data.payload);
             if (data.event === 'saveState') broadcastDashboardUpdate();
