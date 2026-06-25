@@ -975,12 +975,42 @@ app.get('/dashboard', (req, res) => {
                 const socket = io();
                 
                 const gameNamesMap = {
+                    // ألعاب كيو بلس (Q+ Games)
                     'bathara': 'بعثرة 🧩',
                     'bingo': 'بينجو 🔢',
+                    'risk': 'المجازفة 🃏',
                     'risk_game': 'المجازفة 🃏',
                     'tarkiba': 'تركيبة 🔠',
                     'decode': 'فك الشفرة 🕵️',
                     'coordinates': 'إحداثيات 🎯',
+                    'ihdathiyat': 'إحداثيات 🎯',
+                    'memory': 'الذاكرة التفاعلية 🧠',
+                    'shadhaya': 'شظايا 💥',
+                    'rain': 'مطر الحروف ☔',
+                    'sniper': 'القناص 🎯',
+                    'hidden': 'الرابط الخفي 🔗',
+                    'liar': 'بار الكذابين 🤥',
+                    'liar_deck': 'بار الكذابين 🤥',
+                    'money-stake': 'فلوسك على المحك 💰',
+                    'safe': 'الخزنة السرية 🔒',
+                    'safe_crack': 'الخزنة السرية 🔒',
+                    'million-decision': 'قرار بمليون 💵',
+                    'million_decision': 'قرار بمليون 💵',
+                    'race': 'سباق الحظ 🏁',
+                    'race_v2': 'سباق الحظ 🏁',
+                    'family-feud': 'فاميلي فيود 👪',
+                    'quiz': 'KIO Quiz 📝',
+                    'quiz_game': 'KIO Quiz 📝',
+                    'war_drums': 'طبول الحرب 🥁',
+                    'the_cell': 'الخلية 🦠',
+                    'voting': 'التصويت 📊',
+                    'explain_words': 'شرح الكلمات 🗣️',
+                    'missing_word': 'الكلمة المفقودة 🔍',
+                    'countries_war': 'حرب الدول 🗺️',
+                    'fruit_war': 'حرب الفواكه 🍓',
+                    'flip': 'اقلب واكسب 🔄',
+
+                    // ألعاب تيك توك والبث المباشر (TikTok / Live Games)
                     'tiktok_bomb': 'تيك توك: القنبلة 💣',
                     'tiktok-bomb': 'تيك توك: القنبلة 💣',
                     'tiktok_roulette': 'تيك توك: الروليت والإقصاء 🎡',
@@ -998,15 +1028,16 @@ app.get('/dashboard', (req, res) => {
                     'trivia-survival': 'تيك توك: شطب ❌',
                     'tiktok-trivia-survival': 'تيك توك: شطب ❌',
                     'tiktok_trivia_survival': 'تيك توك: شطب ❌',
-                    'kharabisha': 'تيك توك: خربيشة ✏️',
-                    'numble': 'تيك توك: نمبل 🔢',
-                    'hexagon-maze': 'تيك توك: المتاهة السداسية 🌀',
+                    'kharabisha': 'تيك توك: خربشة 🎨',
+                    'numble': 'تيك توك: كاسر الشفرة 🔢',
+                    'hexagon-maze': 'تيك توك: شبكة الحروف 🔡',
                     'salata': 'تيك توك: سلطة 🥗',
                     'zehniat': 'تيك توك: ذهنيات 🧠',
                     'tiktok-sard': 'تيك توك: سرد 📝',
                     'sard': 'تيك توك: سرد 📝',
                     'shabbik': 'تيك توك: شبك 🔗',
-                    'million_decision': 'قرار بمليون 💰',
+                    'tiktok-musical-chairs': 'تيك توك: الكراسي الموسيقية 🪑',
+                    'musical-chairs': 'تيك توك: الكراسي الموسيقية 🪑',
                     'غير معروف': 'في الانتظار ⏳'
                 };
                 
@@ -2100,6 +2131,8 @@ io.on('connection', (socket) => {
     function getGameTypeFromReferer(referer) {
         if (!referer) return 'غير معروف';
         const lower = referer.toLowerCase();
+        
+        // 1. ألعاب تيك توك التفاعلية
         if (lower.includes('marathon.html')) return 'tiktok_marathon';
         if (lower.includes('tiktok-russian-roulette.html')) return 'tiktok_russian_roulette';
         if (lower.includes('tiktok-roulette.html')) return 'tiktok_roulette';
@@ -2112,11 +2145,24 @@ io.on('connection', (socket) => {
         if (lower.includes('tiktok-sniper.html')) return 'tiktok_sniper';
         if (lower.includes('trivia-survival.html')) return 'trivia_survival';
         if (lower.includes('zehniat.html')) return 'zehniat';
+        if (lower.includes('sard.html')) return 'sard';
+        if (lower.includes('shabbik.html')) return 'shabbik';
+        if (lower.includes('musical-chairs.html')) return 'tiktok-musical-chairs';
 
-        // محاولة استخراج اسم الملف تلقائياً لتجنب الرجوع للقنبلة كخيار افتراضي خاطئ
+        // 2. ألعاب كيو بلس (VIP Games) - تنظيف اللواحق والبادئات
         const match = referer.match(/\/([^\/]+)\.html/i);
         if (match && match[1]) {
-            return match[1];
+            let name = match[1].toLowerCase();
+            // إزالة الكلمات الملحقة بنوع الصفحة لمعرفة اسم اللعبة الحقيقي
+            name = name.replace(/-(host|control|setup|player|view|v2)$/g, '');
+            name = name.replace(/_game$/g, '');
+            
+            if (name === 'explain-words') return 'explain_words';
+            if (name === 'color-war') return 'color_war';
+            if (name === 'countries-war') return 'countries_war';
+            if (name === 'fruit-war') return 'fruit_war';
+            if (name === 'hidden-link') return 'hidden';
+            return name;
         }
 
         return 'غير معروف';
@@ -2124,7 +2170,12 @@ io.on('connection', (socket) => {
 
     function getGameTypeFromId(gameId) {
         if (!gameId) return 'غير معروف';
-        const id = gameId.toLowerCase();
+        let id = gameId.toLowerCase();
+        
+        // تنظيف المعرفات
+        id = id.replace(/-(host|control|setup|player|view|v2)$/g, '');
+        id = id.replace(/_game$/g, '');
+        
         if (id === 'marathon' || id === 'tiktok_marathon') return 'tiktok_marathon';
         if (id === 'tiktok-russian-roulette' || id === 'tiktok_russian_roulette') return 'tiktok_russian_roulette';
         if (id === 'tiktok-roulette' || id === 'tiktok_roulette') return 'tiktok_roulette';
@@ -2137,6 +2188,9 @@ io.on('connection', (socket) => {
         if (id === 'sniper' || id === 'tiktok_sniper') return 'tiktok_sniper';
         if (id === 'trivia-survival' || id === 'trivia_survival' || id === 'tiktok-trivia-survival') return 'trivia_survival';
         if (id === 'zehniat') return 'zehniat';
+        if (id === 'sard' || id === 'tiktok-sard') return 'sard';
+        if (id === 'shabbik') return 'shabbik';
+        if (id === 'musical-chairs' || id === 'tiktok-musical-chairs') return 'tiktok-musical-chairs';
         return id;
     }
 
@@ -2593,7 +2647,14 @@ io.on('connection', (socket) => {
     socket.on('createRoom', (roomId, gameType) => {
         const existingRoom = roomsData[roomId];
         const originalGameType = existingRoom && existingRoom.gameState ? (existingRoom.gameState.gameType || existingRoom.gameState.type) : null;
-        const resolvedGameType = gameType || originalGameType;
+        let resolvedGameType = gameType || originalGameType;
+
+        if (!resolvedGameType) {
+            resolvedGameType = getGameTypeFromReferer(socket.handshake.headers.referer);
+        } else {
+            resolvedGameType = getGameTypeFromId(resolvedGameType);
+        }
+
         // التحقق الأمني: يسمح للألعاب المجانية بالمرور بدون توكن
         const isFreeGame = ['countries_war', 'fruit_war', 'flip_turn', 'memory', 'lucky_wheel'].includes(resolvedGameType);
 
