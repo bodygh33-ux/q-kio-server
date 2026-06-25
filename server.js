@@ -2133,24 +2133,25 @@ io.on('connection', (socket) => {
         const lower = referer.toLowerCase();
         
         // 1. ألعاب تيك توك التفاعلية
-        if (lower.includes('marathon.html')) return 'tiktok_marathon';
-        if (lower.includes('tiktok-russian-roulette.html')) return 'tiktok_russian_roulette';
-        if (lower.includes('tiktok-roulette.html')) return 'tiktok_roulette';
-        if (lower.includes('tiktok-bomb.html')) return 'tiktok_bomb';
-        if (lower.includes('tiktok-missiles.html') || lower.includes('missiles.html') || lower.includes('rockets.html')) return 'tiktok_rockets';
-        if (lower.includes('kharabisha.html')) return 'kharabisha';
-        if (lower.includes('numble.html')) return 'numble';
-        if (lower.includes('hexagon-maze.html')) return 'hexagon-maze';
-        if (lower.includes('salata.html')) return 'salata';
-        if (lower.includes('tiktok-sniper.html')) return 'tiktok_sniper';
-        if (lower.includes('trivia-survival.html')) return 'trivia_survival';
-        if (lower.includes('zehniat.html')) return 'zehniat';
-        if (lower.includes('sard.html')) return 'sard';
-        if (lower.includes('shabbik.html')) return 'shabbik';
-        if (lower.includes('musical-chairs.html')) return 'tiktok-musical-chairs';
+        if (lower.includes('marathon')) return 'tiktok_marathon';
+        if (lower.includes('russian-roulette')) return 'tiktok_russian_roulette';
+        if (lower.includes('tiktok-roulette')) return 'tiktok_roulette';
+        if (lower.includes('bomb')) return 'tiktok_bomb';
+        if (lower.includes('missiles') || lower.includes('rockets')) return 'tiktok_rockets';
+        if (lower.includes('kharabisha')) return 'kharabisha';
+        if (lower.includes('numble')) return 'numble';
+        if (lower.includes('hexagon-maze') || lower.includes('hexagon')) return 'hexagon-maze';
+        if (lower.includes('salata')) return 'salata';
+        if (lower.includes('tiktok-sniper')) return 'tiktok_sniper';
+        if (lower.includes('trivia-survival') || lower.includes('trivia_survival')) return 'trivia_survival';
+        if (lower.includes('zehniat')) return 'zehniat';
+        if (lower.includes('sard')) return 'sard';
+        if (lower.includes('shabbik')) return 'shabbik';
+        if (lower.includes('musical-chairs') || lower.includes('chairs')) return 'tiktok-musical-chairs';
 
         // 2. ألعاب كيو بلس (VIP Games) - تنظيف اللواحق والبادئات
-        const match = referer.match(/\/([^\/]+)\.html/i);
+        const cleanUrl = lower.split('?')[0]; // إزالة الـ query parameters
+        const match = cleanUrl.match(/\/([^\/]+?)(?:\.html)?$/i);
         if (match && match[1]) {
             let name = match[1].toLowerCase();
             // إزالة الكلمات الملحقة بنوع الصفحة لمعرفة اسم اللعبة الحقيقي
