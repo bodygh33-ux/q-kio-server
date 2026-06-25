@@ -2128,21 +2128,27 @@ io.on('connection', (socket) => {
     });
 
     // دوال مساعدة لتحديد نوع اللعبة من الرابط أو المعرف لتسهيل إعادة التهيئة عند الانتقال بين الألعاب
-    function getGameTypeFromReferer(referer) {
-        if (!referer) return 'غير معروف';
-        const lower = referer.toLowerCase();
+    function getGameTypeFromReferer(referer, socketRef) {
+        let lower = '';
+        if (referer) {
+            lower = referer.toLowerCase();
+        } else if (socketRef && socketRef.handshake && socketRef.handshake.query && socketRef.handshake.query.gameId) {
+            lower = String(socketRef.handshake.query.gameId).toLowerCase();
+        } else {
+            return 'غير معروف';
+        }
         
         // 1. ألعاب تيك توك التفاعلية
         if (lower.includes('marathon')) return 'tiktok_marathon';
         if (lower.includes('russian-roulette')) return 'tiktok_russian_roulette';
-        if (lower.includes('tiktok-roulette')) return 'tiktok_roulette';
+        if (lower.includes('tiktok-roulette') || lower.includes('roulette')) return 'tiktok_roulette';
         if (lower.includes('bomb')) return 'tiktok_bomb';
         if (lower.includes('missiles') || lower.includes('rockets')) return 'tiktok_rockets';
         if (lower.includes('kharabisha')) return 'kharabisha';
         if (lower.includes('numble')) return 'numble';
         if (lower.includes('hexagon-maze') || lower.includes('hexagon')) return 'hexagon-maze';
         if (lower.includes('salata')) return 'salata';
-        if (lower.includes('tiktok-sniper')) return 'tiktok_sniper';
+        if (lower.includes('tiktok-sniper') || lower.includes('sniper')) return 'tiktok_sniper';
         if (lower.includes('trivia-survival') || lower.includes('trivia_survival')) return 'trivia_survival';
         if (lower.includes('zehniat')) return 'zehniat';
         if (lower.includes('sard')) return 'sard';
@@ -2208,7 +2214,7 @@ io.on('connection', (socket) => {
         if (!username) return;
 
         // تحديد اللعبة المستهدفة عند الربط
-        const targetGameType = getGameTypeFromId(data.gameId || getGameTypeFromReferer(socket.handshake.headers.referer));
+        const targetGameType = getGameTypeFromId(data.gameId || getGameTypeFromReferer(socket.handshake.headers.referer, socket));
         console.log(`[TikTok Connect] Host @${username} wants game type: ${targetGameType}`);
 
         // join socket.io room for this tiktok username
@@ -2657,7 +2663,7 @@ io.on('connection', (socket) => {
         let resolvedGameType = gameType || originalGameType;
 
         if (!resolvedGameType) {
-            resolvedGameType = getGameTypeFromReferer(socket.handshake.headers.referer);
+            resolvedGameType = getGameTypeFromReferer(socket.handshake.headers.referer, socket);
         } else {
             resolvedGameType = getGameTypeFromId(resolvedGameType);
         }
