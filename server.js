@@ -424,6 +424,87 @@ app.post('/api/tiktok/disconnect', requireAuth, async (req, res) => {
     return res.status(403).json({ success: false, message: 'إلغاء ربط الحسابات معطل حالياً لأسباب أمنية.' });
 });
 
+// مسار تسجيل الأجهزة والتحقق من الاشتراكات بشكل آمن من طرف السيرفر (لتجاوز مشاكل RLS)
+app.post('/api/register-device', requireAuth, async (req, res) => {
+    try {
+        const { playerId, deviceId, sessionType } = req.body;
+        
+        if (!playerId || !deviceId || !sessionType) {
+            return res.status(400).json({ success: false, message: 'بيانات غير مكتملة.' });
+        }
+
+        if (!supabase) {
+            return res.status(500).json({ success: false, message: 'قاعدة البيانات غير متصلة.' });
+        }
+
+        // جلب الاشتراك باستخدام صلاحيات الخدمة الكاملة للسيرفر
+        const { data: sub, error: subError } = await supabase
+            .from('subscriptions')
+            .select('expiry_date, used_devices, max_devices, games, platforms')
+            .eq('player_id', playerId)
+            .eq('type', sessionType)
+            .maybeSingle();
+
+        if (subError) throw subError;
+        if (!sub) {
+            return res.status(404).json({ success: false, message: 'لا يوجد اشتراك نشط لهذا القسم.' });
+        }
+
+        const expiryMs = new Date(sub.expiry_date).getTime();
+        if (Date.now() >= expiryMs) {
+            return res.status(403).json({ success: false, message: 'الاشتراك منتهي الصلاحية.' });
+        }
+
+        const hasLocalRegistration = req.body.hasLocalRegistration === true;
+        const usedDevices = Array.isArray(sub.used_devices) ? sub.used_devices : [];
+        const maxDevices = sub.max_devices || 1;
+
+        if (!usedDevices.includes(deviceId)) {
+            // إذا كان المتصفح يدعي أنه كان مسجلاً بالـ LocalStorage ولكن السيرفر لا يجد الجهاز بالـ DB
+            // فهذا يعني حدوث تصفير للأجهزة من الأدمن
+            if (hasLocalRegistration) {
+                return res.status(401).json({
+                    success: false,
+                    code: 'DEVICES_RESET',
+                    message: 'تم تصفير الأجهزة المسجلة من قبل الإدارة، يرجى إعادة تسجيل الدخول.'
+                });
+            }
+
+            if (usedDevices.length >= maxDevices) {
+                return res.status(403).json({ 
+                    success: false, 
+                    code: 'MAX_DEVICES_REACHED',
+                    message: `عفواً، الأجهزة المسجلة ${usedDevices.length}/${maxDevices} ومستنفذة بالكامل. لا يمكن تسجيل جهاز جديد.` 
+                });
+            }
+            usedDevices.push(deviceId);
+        }
+
+        const { error: updateErr } = await supabase
+            .from('subscriptions')
+            .update({ used_devices: usedDevices, last_login: new Date().toISOString() })
+            .eq('player_id', playerId)
+            .eq('type', sessionType);
+
+        if (updateErr) throw updateErr;
+
+        return res.json({
+            success: true,
+            subscription: {
+                expiry_date: sub.expiry_date,
+                used_devices: usedDevices,
+                max_devices: maxDevices,
+                games: sub.games || [],
+                platforms: sub.platforms || []
+            }
+        });
+
+    } catch (err) {
+        console.error('[Register Device API Error]:', err.message);
+        return res.status(500).json({ success: false, message: 'حدث خطأ في السيرفر أثناء تسجيل الجهاز.' });
+    }
+});
+
 // --- دالة جلب معرف غرفة دردشة كيك (Kick Chatroom ID) ---
 const https = require('https');
 function fetchKickChatroom(channelName) {
