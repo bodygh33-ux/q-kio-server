@@ -217,10 +217,10 @@ function fetchTikTokProfileHTML(username) {
     });
 }
 
-// استخراج البيو والصورة الشخصية من كود الصفحة
+// استخراج البيو واسم العرض (Nickname) من كود الصفحة
 function extractTikTokData(html) {
     let signature = '';
-    let avatarUrl = '';
+    let avatarUrl = ''; // سنقوم بتخزين اسم العرض (Nickname) هنا لتجنب مشاكل انتهاء روابط الصور وتوفير اسم العرض للوحة التحكم
 
     // محاولة استخراج الـ Bio (signature) من كود JSON الداخلي لـ TikTok
     const signatureMatch = html.match(/"signature"\s*:\s*"([^"]+)"/);
@@ -236,17 +236,16 @@ function extractTikTokData(html) {
         }
     }
 
-    // محاولة استخراج رابط الصورة الشخصية
-    const avatarMatch = html.match(/"avatarLarger"\s*:\s*"([^"]+)"/) || html.match(/"avatarThumb"\s*:\s*"([^"]+)"/);
-    if (avatarMatch) {
-        avatarUrl = avatarMatch[1]
-            .replace(/\\u002F/g, '/')
+    // استخراج اسم العرض (Nickname) من تيك توك وتخزينه في حقل avatarUrl
+    const nicknameMatch = html.match(/"nickname"\s*:\s*"([^"]+)"/);
+    if (nicknameMatch) {
+        avatarUrl = nicknameMatch[1]
             .replace(/\\u([0-9a-fA-F]{4})/g, (match, grp) => String.fromCharCode(parseInt(grp, 16)))
-            .replace(/\\/g, '');
+            .replace(/\\+/g, '');
     } else {
-        const ogImageMatch = html.match(/<meta\s+property="og:image"\s+content="([^"]+)"/i);
-        if (ogImageMatch) {
-            avatarUrl = ogImageMatch[1];
+        const titleMatch = html.match(/<title>([^(]+)\s*\(@[^)]+\)/i);
+        if (titleMatch) {
+            avatarUrl = titleMatch[1].trim();
         }
     }
 
