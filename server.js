@@ -45,11 +45,18 @@ app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// ✅ تشغيل الموقع محلياً — يخدم كل ملفات HTML/CSS/JS/الصور
+// ✅ تشغيل الموقع محلياً — يخدم كل ملفات HTML/CSS/JS/الصور مع تعطيل الكاش للتحديث الفوري
 const path = require('path');
 app.use(express.static(path.join(__dirname), {
     index: 'index.html',
-    extensions: ['html']
+    extensions: ['html'],
+    etag: false,
+    maxAge: 0,
+    setHeaders: (res, filePath) => {
+        res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+        res.setHeader('Pragma', 'no-cache');
+        res.setHeader('Expires', '0');
+    }
 }));
 
 const server = http.createServer(app);
