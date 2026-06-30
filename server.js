@@ -814,6 +814,24 @@ io.use(async (socket, next) => {
                         console.log(`[Socket Auth Debug] Player: ${finalPlayerId} | Type: ${sType} | Expiry: ${sub.expiry_date}`);
                         const expiryMs = new Date(sub.expiry_date).getTime();
                         if (Date.now() < expiryMs) {
+                            const socketDeviceId = socket.handshake.auth?.deviceId;
+                            if (socketDeviceId) {
+                                const connectedSockets = Array.from(io.sockets.sockets.values());
+                                const existingSocket = connectedSockets.find(s => 
+                                    s.id !== socket.id &&
+                                    s.decodedToken &&
+                                    s.decodedToken.playerId === finalPlayerId &&
+                                    s.decodedToken.type === sType &&
+                                    s.handshake.auth?.deviceId &&
+                                    s.handshake.auth?.deviceId !== socketDeviceId
+                                );
+
+                                if (existingSocket) {
+                                    console.warn(`[Socket Auth] Rejected - Session already active on another device for player ${finalPlayerId} (type: ${sType})`);
+                                    return next(new Error('Authentication error: Session active on another device'));
+                                }
+                            }
+
                             socket.decodedToken = {
                                 type: sType,
                                 client: finalPlayerId,
