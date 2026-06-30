@@ -437,8 +437,22 @@ app.post('/api/register-device', requireAuth, async (req, res) => {
             return res.status(500).json({ success: false, message: 'قاعدة البيانات غير متصلة.' });
         }
 
-        // جلب الاشتراك باستخدام صلاحيات الخدمة الكاملة للسيرفر
-        const { data: sub, error: subError } = await supabase
+        // استخراج التوكن الخاص بالمستخدم من الترويسة لإنشاء عميل Supabase خاص به
+        // هذا يسمح لنا بالقيام بالعمليات البرمجية باسم المستخدم المصادق عليه لتجاوز قيود الـ RLS إذا كان مفتاح السيرفر هو ANON
+        const authHeader = req.headers.authorization;
+        const token = authHeader.split(' ')[1];
+        
+        const userClient = createClient(supabaseUrl.trim(), supabaseServiceKey.trim(), {
+            auth: { persistSession: false, autoRefreshToken: false },
+            global: {
+                headers: {
+                    Authorization: `Bearer ${token}`
+                }
+            }
+        });
+
+        // جلب الاشتراك باستخدام صلاحيات المستخدم المصادق عليه لتجنب قيود الـ RLS
+        const { data: sub, error: subError } = await userClient
             .from('subscriptions')
             .select('expiry_date, used_devices, max_devices, games, platforms')
             .eq('player_id', playerId)
@@ -480,7 +494,7 @@ app.post('/api/register-device', requireAuth, async (req, res) => {
             usedDevices.push(deviceId);
         }
 
-        const { error: updateErr } = await supabase
+        const { error: updateErr } = await userClient
             .from('subscriptions')
             .update({ used_devices: usedDevices, last_login: new Date().toISOString() })
             .eq('player_id', playerId)
@@ -898,17 +912,16 @@ io.use(async (socket, next) => {
                             const socketDeviceId = socket.handshake.auth?.deviceId;
                             if (socketDeviceId) {
                                 const connectedSockets = Array.from(io.sockets.sockets.values());
-                                const existingSocket = connectedSockets.find(s => 
+                                const existingSocket = connectedSockets.find(s =>
                                     s.id !== socket.id &&
                                     s.decodedToken &&
                                     s.decodedToken.playerId === finalPlayerId &&
-                                    s.decodedToken.type === sType &&
                                     s.handshake.auth?.deviceId &&
                                     s.handshake.auth?.deviceId !== socketDeviceId
                                 );
 
                                 if (existingSocket) {
-                                    console.warn(`[Socket Auth] Rejected - Session already active on another device for player ${finalPlayerId} (type: ${sType})`);
+                                    console.warn(`[Socket Auth] Rejected - Session already active on another device for player ${finalPlayerId} (any type/section)`);
                                     return next(new Error('Authentication error: Session active on another device'));
                                 }
                             }
