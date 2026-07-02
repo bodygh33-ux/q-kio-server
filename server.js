@@ -3140,12 +3140,13 @@ io.on('connection', (socket) => {
         }
         
         try {
-            // جلب اللاعبين المرتبطين فقط
+            // جلب اللاعبين المرتبطين فقط (مطابقة غير حساسة لحالة الأحرف Case-Insensitive)
             console.log('[Game Result] Fetching linked players from tiktok_links...');
+            const orFilters = uniqueParticipants.map(username => `tiktok_username.ilike.${username}`).join(',');
             const { data: links, error: fetchErr } = await supabase
                 .from('tiktok_links')
                 .select('id, tiktok_username')
-                .in('tiktok_username', uniqueParticipants)
+                .or(orFilters)
                 .eq('is_linked', true);
                 
             if (fetchErr) {
@@ -3191,7 +3192,7 @@ io.on('connection', (socket) => {
             // 3. تحديث إجمالي الفوز للفائز باللقب
             if (data.winner) {
                 const winnerUsername = data.winner.toLowerCase().trim();
-                const matchedWinnerLink = links.find(l => l.tiktok_username === winnerUsername);
+                const matchedWinnerLink = links.find(l => l.tiktok_username.toLowerCase() === winnerUsername);
                 if (matchedWinnerLink) {
                     const { data: pRow } = await supabase
                         .from('players')
