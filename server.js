@@ -2615,7 +2615,7 @@ io.on('connection', (socket) => {
             const connectionOptions = {
                 processInitialData: false,      // لا نعالج البيانات الأولية لتوفير الموارد
                 enableExtendedGiftInfo: false,  // إيقاف لتحسين استهلاك البيانات (تعتمد على commonGifts)
-                requestPollingIntervalMs: 2000, // تقليل فترة polling الاحتياطي إلى 2 ثانية
+                requestPollingIntervalMs: 5000, // تقليل فترة polling الاحتياطي إلى 5 ثوان لتوفير باقة البروكسي
                 signApiKey: process.env.TIKTOK_SIGN_API_KEY ? process.env.TIKTOK_SIGN_API_KEY.trim() : undefined
             };
 
