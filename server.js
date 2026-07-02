@@ -312,6 +312,19 @@ setInterval(async () => {
     }
 }, 3 * 60 * 1000);
 
+// دالة لتوليد بروكسي دوار عن طريق إضافة كود جلسة عشوائي لاسم المستخدم (مفيد لتخطي حظر تيك توك في طلبات الفحص السريعة)
+function getRotatingProxyUrl(baseProxyUrl) {
+    if (!baseProxyUrl) return baseProxyUrl;
+    try {
+        const urlObj = new URL(baseProxyUrl);
+        const randomSession = Math.floor(Math.random() * 10000000);
+        urlObj.username = `${urlObj.username}_session-${randomSession}`;
+        return urlObj.toString();
+    } catch (e) {
+        return baseProxyUrl;
+    }
+}
+
 // دالة جلب صفحة تيك توك العامة باستخدام البروكسي (إن وجد)
 function fetchTikTokProfileHTML(username) {
     return new Promise((resolve, reject) => {
@@ -333,8 +346,9 @@ function fetchTikTokProfileHTML(username) {
         if (proxyUrl) {
             try {
                 const { HttpsProxyAgent } = require('https-proxy-agent');
-                options.agent = new HttpsProxyAgent(proxyUrl);
-                console.log(`[TikTok Scraper Proxy] Using proxy agent for @${cleanUsername}`);
+                const rotatingProxy = getRotatingProxyUrl(proxyUrl);
+                options.agent = new HttpsProxyAgent(rotatingProxy);
+                console.log(`[TikTok Scraper Proxy] Using rotating proxy agent for @${cleanUsername}`);
             } catch (proxyErr) {
                 console.error(`[TikTok Proxy Error] Failed to init agent:`, proxyErr.message);
             }
@@ -722,8 +736,9 @@ function fetchKickChatroom(channelName) {
         if (proxyUrl) {
             try {
                 const { HttpsProxyAgent } = require('https-proxy-agent');
-                options.agent = new HttpsProxyAgent(proxyUrl);
-                console.log(`[Kick Resolve Proxy] Using HttpsProxyAgent to resolve chatroom ID for @${channelName}`);
+                const rotatingProxy = getRotatingProxyUrl(proxyUrl);
+                options.agent = new HttpsProxyAgent(rotatingProxy);
+                console.log(`[Kick Resolve Proxy] Using rotating proxy agent to resolve chatroom ID for @${channelName}`);
             } catch (proxyErr) {
                 console.error(`[Kick Resolve Proxy Error] failed to init agent:`, proxyErr.message);
             }
