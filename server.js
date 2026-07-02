@@ -1,7 +1,7 @@
+require('dotenv').config();
 const express = require('express');
 const http = require('http');
 const cors = require('cors');
-const admin = require('firebase-admin');
 const { Server } = require('socket.io');
 const { TikTokLiveConnection, SignConfig } = require('tiktok-live-connector'); // إضافة مكتبة تيك توك
 const WebSocket = global.WebSocket; // الويب سوكت المدمج بنود 22+ لدعم تويتش وكيك بدون إضافات خارجية
@@ -45,54 +45,46 @@ app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+// ✅ تشغيل الموقع محلياً — يخدم كل ملفات HTML/CSS/JS/الصور مع تعطيل الكاش للتحديث الفوري
+const path = require('path');
+app.use(express.static(path.join(__dirname), {
+    index: 'index.html',
+    extensions: ['html'],
+    etag: false,
+    maxAge: 0,
+    setHeaders: (res, filePath) => {
+        res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+        res.setHeader('Pragma', 'no-cache');
+        res.setHeader('Expires', '0');
+    }
+}));
+
 const server = http.createServer(app);
 
 // كلمة السر للوحة التحكم لألعاب التيك توك (القديمة)
 const ADMIN_PASSWORD = 'admin';
-// كلمة السر لإدارة الأكواد ولوحة التحكم الخاصة بالأكواد (qghazy66admin)
-const CODES_ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || '123';
 
-// تهيئة Firebase Admin SDK
-let serviceAccount = null;
+// تهيئة Supabase Client
+const { createClient } = require('@supabase/supabase-js');
+const supabaseUrl = process.env.SUPABASE_URL;
+const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY;
 
-if (process.env.FIREBASE_PROJECT_ID && process.env.FIREBASE_CLIENT_EMAIL && process.env.FIREBASE_PRIVATE_KEY) {
-    let privateKey = process.env.FIREBASE_PRIVATE_KEY.trim();
-    // إزالة علامات الاقتباس المزدوجة أو الفردية الزائدة إن وجدت بالخطأ في البيئة
-    if (privateKey.startsWith('"') && privateKey.endsWith('"')) {
-        privateKey = privateKey.substring(1, privateKey.length - 1);
-    }
-    if (privateKey.startsWith("'") && privateKey.endsWith("'")) {
-        privateKey = privateKey.substring(1, privateKey.length - 1);
-    }
-    privateKey = privateKey.replace(/\\n/g, '\n');
-
-    serviceAccount = {
-        projectId: process.env.FIREBASE_PROJECT_ID,
-        clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-        privateKey: privateKey
-    };
-} else {
+let supabase = null;
+if (supabaseUrl && supabaseServiceKey) {
     try {
-        serviceAccount = require('./serviceAccountKey.json');
-    } catch (e) {
-        console.warn("⚠️ Warning: serviceAccountKey.json not found and environment variables not set. Firebase Admin SDK will not work.");
-    }
-}
-
-if (serviceAccount) {
-    try {
-        admin.initializeApp({
-            credential: admin.credential.cert(serviceAccount)
+        supabase = createClient(supabaseUrl.trim(), supabaseServiceKey.trim(), {
+            auth: {
+                persistSession: false,
+                autoRefreshToken: false
+            }
         });
-        console.log("🔥 Firebase Admin SDK initialized successfully.");
+        console.log("⚡ Supabase Client initialized successfully with SERVICE_ROLE_KEY.");
     } catch (error) {
-        console.error("❌ Firebase Admin SDK initialization error:", error.message);
+        console.error("❌ Supabase Client initialization error:", error.message);
     }
 } else {
-    console.error("❌ Firebase Admin SDK cannot be initialized (no credentials found).");
+    console.warn("⚠️ Warning: SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY is empty in .env. Supabase client will not work.");
 }
-
-const db = serviceAccount ? admin.firestore() : null;
 
 // تهيئة خادم توقيع اتصال التيك توك بشكل عام
 try {
@@ -109,36 +101,37 @@ try {
     console.error(`[TikTok SignConfig] Error setting SignConfig:`, e.message);
 }
 
-// ===== [SECURITY] التوقيع الرقمي وإدارة الجلسات الآمنة =====
-const crypto = require('crypto');
-const SIGNING_SECRET = process.env.SIGNING_SECRET || 'kio_super_secret_signing_key_2026';
-
-function generateSecureToken(payload) {
-    const dataString = JSON.stringify(payload);
-    const signature = crypto.createHmac('sha256', SIGNING_SECRET).update(dataString).digest('hex');
-    return `${Buffer.from(dataString).toString('base64')}.${signature}`;
-}
-
-function verifySecureToken(token) {
-    try {
-        if (!token) return null;
-        const parts = token.split('.');
-        if (parts.length !== 2) return null;
-
-        const payloadStr = Buffer.from(parts[0], 'base64').toString('utf8');
-        const signature = parts[1];
-        const expectedSignature = crypto.createHmac('sha256', SIGNING_SECRET).update(payloadStr).digest('hex');
-
-        if (signature !== expectedSignature) return null;
-        return JSON.parse(payloadStr);
-    } catch (e) {
-        return null;
-    }
-}
-
 // Removed verifySocketAuth definition as requested.
 
-// --- Image Proxy لصور التيك توك (تجاوز قيود CORS) ---
+// --- Image Proxy لصور التيك توك مع كاش محلي قوي لتوفير البروكسي ---
+const fs = require('fs');
+const AVATAR_CACHE_DIR = path.join(__dirname, 'platform', 'cache', 'avatars');
+
+// التأكد من وجود مجلد الكاش
+if (!fs.existsSync(AVATAR_CACHE_DIR)) {
+    fs.mkdirSync(AVATAR_CACHE_DIR, { recursive: true });
+}
+
+// دالة تنظيف الملفات القديمة (أقدم من 24 ساعة) لتجنب امتلاء القرص
+function cleanExpiredAvatarCache() {
+    fs.readdir(AVATAR_CACHE_DIR, (err, files) => {
+        if (err) return;
+        const now = Date.now();
+        const expirationTime = 24 * 60 * 60 * 1000; // 24 ساعة
+        files.forEach(file => {
+            const filePath = path.join(AVATAR_CACHE_DIR, file);
+            fs.stat(filePath, (statErr, stats) => {
+                if (statErr) return;
+                if (now - stats.mtimeMs > expirationTime) {
+                    fs.unlink(filePath, () => {});
+                }
+            });
+        });
+    });
+}
+// تشغيل التنظيف مرة كل 6 ساعات
+setInterval(cleanExpiredAvatarCache, 6 * 60 * 60 * 1000);
+
 app.get('/api/proxy-image', (req, res) => {
     const url = req.query.url;
     if (!url) return res.status(400).send('Missing url');
@@ -157,9 +150,22 @@ app.get('/api/proxy-image', (req, res) => {
         return res.status(403).send('Domain not allowed');
     }
 
-    const https = require('https');
+    // توليد اسم ملف فريد بناءً على رابط الصورة (MD5 أو Base64 آمن)
+    const crypto = require('crypto');
+    const fileHash = crypto.createHash('md5').update(url).digest('hex');
+    const cachedFilePath = path.join(AVATAR_CACHE_DIR, `${fileHash}.jpg`);
     const fallback = `https://ui-avatars.com/api/?name=U&background=random&color=fff`;
 
+    // 1. إذا كانت الصورة موجودة في الكاش المحلي، أرسلها فوراً ووفر البروكسي!
+    if (fs.existsSync(cachedFilePath)) {
+        res.set('Access-Control-Allow-Origin', '*');
+        res.set('Cache-Control', 'public, max-age=86400'); // كاش متصفح يوم كامل
+        res.set('Content-Type', 'image/jpeg');
+        return fs.createReadStream(cachedFilePath).pipe(res);
+    }
+
+    // 2. إذا لم تكن موجودة، حملها واحفظها محلياً ثم أرسلها
+    const https = require('https');
     const request = https.get(url, {
         headers: {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
@@ -168,10 +174,18 @@ app.get('/api/proxy-image', (req, res) => {
         },
         timeout: 8000
     }, (imgRes) => {
-        res.set('Access-Control-Allow-Origin', '*');
-        res.set('Cache-Control', 'public, max-age=86400');
-        res.set('Content-Type', imgRes.headers['content-type'] || 'image/jpeg');
-        imgRes.pipe(res);
+        if (imgRes.statusCode === 200) {
+            res.set('Access-Control-Allow-Origin', '*');
+            res.set('Cache-Control', 'public, max-age=86400');
+            res.set('Content-Type', imgRes.headers['content-type'] || 'image/jpeg');
+
+            // حفظ الصورة في ملف محلي بالتوازي مع إرسالها للمتصفح
+            const fileStream = fs.createWriteStream(cachedFilePath);
+            imgRes.pipe(fileStream);
+            imgRes.pipe(res);
+        } else {
+            res.redirect(fallback);
+        }
     });
 
     request.on('error', () => {
@@ -183,352 +197,426 @@ app.get('/api/proxy-image', (req, res) => {
     });
 });
 
-// --- APIs للتحكم بالأكواد وإدارة الجلسات ---
 
 
-// 1. جلب الأكواد للمدير
-app.get('/api/admin/codes', (req, res, next) => {
-    const pass = req.headers['x-admin-password'] || req.query.pass;
-    if (pass !== CODES_ADMIN_PASSWORD) return res.status(401).json({ success: false, message: 'رمز التحقق خاطئ' });
-    next();
-}, async (req, res) => {
-    const { collection } = req.query;
-    if (!['codes', 'encyclopedia_codes', 'tiktok_codes'].includes(collection)) {
-        return res.status(400).json({ success: false, message: 'اسم المجموعة غير صحيح' });
-    }
-    if (!db) return res.status(500).json({ success: false, message: 'قاعدة البيانات غير مهيأة' });
 
+// ==========================================
+//   نظام ربط حسابات تيك توك عبر الـ Bio
+// ==========================================
+
+// Middleware للتحقق من التوكن الخاص بـ Supabase
+const requireAuth = async (req, res, next) => {
     try {
-        const snapshot = await db.collection(collection).orderBy('createdAt', 'desc').get();
-        const codes = [];
-        snapshot.forEach(doc => {
-            codes.push({ id: doc.id, ...doc.data() });
-        });
-        res.json({ success: true, codes });
-    } catch (error) {
-        res.status(500).json({ success: false, message: error.message });
-    }
-});
-
-// 2. إنشاء كود جديد
-app.post('/api/admin/create-code', (req, res, next) => {
-    const pass = req.headers['x-admin-password'] || req.body.pass;
-    if (pass !== CODES_ADMIN_PASSWORD) return res.status(401).json({ success: false, message: 'رمز التحقق خاطئ' });
-    next();
-}, async (req, res) => {
-    const { collection, docId, data } = req.body;
-    if (!['codes', 'encyclopedia_codes', 'tiktok_codes'].includes(collection)) {
-        return res.status(400).json({ success: false, message: 'اسم المجموعة غير صحيح' });
-    }
-    if (!db) return res.status(500).json({ success: false, message: 'قاعدة البيانات غير مهيأة' });
-
-    try {
-        if (docId) {
-            const docRef = db.collection(collection).doc(docId);
-            const docSnap = await docRef.get();
-            if (docSnap.exists) {
-                return res.status(400).json({ success: false, message: 'هذا الكود مستخدم بالفعل!' });
-            }
-            await docRef.set(data);
-            res.json({ success: true, id: docId });
-        } else {
-            const docRef = await db.collection(collection).add(data);
-            res.json({ success: true, id: docRef.id });
+        const authHeader = req.headers.authorization;
+        if (!authHeader || !authHeader.startsWith('Bearer ')) {
+            return res.status(401).json({ success: false, message: 'معرف الجلسة غير موجود أو غير صالح.' });
         }
-    } catch (error) {
-        res.status(500).json({ success: false, message: error.message });
-    }
-});
-
-// 3. تحديث كود
-app.post('/api/admin/update-code', (req, res, next) => {
-    const pass = req.headers['x-admin-password'] || req.body.pass;
-    if (pass !== CODES_ADMIN_PASSWORD) return res.status(401).json({ success: false, message: 'رمز التحقق خاطئ' });
-    next();
-}, async (req, res) => {
-    const { collection, id, data } = req.body;
-    if (!['codes', 'encyclopedia_codes', 'tiktok_codes'].includes(collection)) {
-        return res.status(400).json({ success: false, message: 'اسم المجموعة غير صحيح' });
-    }
-    if (!db) return res.status(500).json({ success: false, message: 'قاعدة البيانات غير مهيأة' });
-
-    try {
-        await db.collection(collection).doc(id).update(data);
-        res.json({ success: true });
-    } catch (error) {
-        res.status(500).json({ success: false, message: error.message });
-    }
-});
-
-// 4. تغيير نص الكود (تخصيص الكود)
-app.post('/api/admin/change-code-string', (req, res, next) => {
-    const pass = req.headers['x-admin-password'] || req.body.pass;
-    if (pass !== CODES_ADMIN_PASSWORD) return res.status(401).json({ success: false, message: 'رمز التحقق خاطئ' });
-    next();
-}, async (req, res) => {
-    const { collection, id, newCode } = req.body;
-    if (!['codes', 'encyclopedia_codes', 'tiktok_codes'].includes(collection)) {
-        return res.status(400).json({ success: false, message: 'اسم المجموعة غير صحيح' });
-    }
-    if (!db) return res.status(500).json({ success: false, message: 'قاعدة البيانات غير مهيأة' });
-
-    try {
-        if (collection === 'codes') {
-            const q = await db.collection('codes').where('code', '==', newCode).get();
-            if (!q.empty) {
-                return res.status(400).json({ success: false, message: 'هذا الكود مستخدم بالفعل! اختر كوداً آخر.' });
-            }
-            await db.collection('codes').doc(id).update({ code: newCode });
-            res.json({ success: true });
-        } else {
-            const newDocRef = db.collection(collection).doc(newCode);
-            const newDocSnap = await newDocRef.get();
-            if (newDocSnap.exists) {
-                return res.status(400).json({ success: false, message: 'هذا الكود مستخدم بالفعل! اختر كوداً آخر.' });
-            }
-
-            const oldDocRef = db.collection(collection).doc(id);
-            const oldDocSnap = await oldDocRef.get();
-            if (oldDocSnap.exists) {
-                const data = oldDocSnap.data();
-                data.code = newCode;
-                await newDocRef.set(data);
-                await oldDocRef.delete();
-                res.json({ success: true });
-            } else {
-                res.status(404).json({ success: false, message: 'الكود القديم غير موجود' });
-            }
+        const token = authHeader.split(' ')[1];
+        if (!supabase) {
+            return res.status(500).json({ success: false, message: 'اتصال قاعدة البيانات Supabase غير متاح.' });
         }
-    } catch (error) {
-        res.status(500).json({ success: false, message: error.message });
-    }
-});
-
-// 5. حذف كود
-app.post('/api/admin/delete-code', (req, res, next) => {
-    const pass = req.headers['x-admin-password'] || req.body.pass;
-    if (pass !== CODES_ADMIN_PASSWORD) return res.status(401).json({ success: false, message: 'رمز التحقق خاطئ' });
-    next();
-}, async (req, res) => {
-    const { collection, id } = req.body;
-    if (!['codes', 'encyclopedia_codes', 'tiktok_codes'].includes(collection)) {
-        return res.status(400).json({ success: false, message: 'اسم المجموعة غير صحيح' });
-    }
-    if (!db) return res.status(500).json({ success: false, message: 'قاعدة البيانات غير مهيأة' });
-
-    try {
-        await db.collection(collection).doc(id).delete();
-        res.json({ success: true });
-    } catch (error) {
-        res.status(500).json({ success: false, message: error.message });
-    }
-});
-
-// 6. واجهة تحقق المستخدمين من كود الألعاب المميزة
-const validateGameCodeHandler = async (req, res) => {
-    const { code, deviceId } = req.body;
-    if (!code || !deviceId) {
-        return res.status(400).json({ success: false, message: 'بيانات ناقصة' });
-    }
-    if (!db) return res.status(500).json({ success: false, message: 'قاعدة البيانات غير مهيأة' });
-
-    try {
-        const q = await db.collection('codes').where('code', '==', code).get();
-        if (q.empty) {
-            return res.status(404).json({ success: false, message: 'الكود الذي أدخلته غير موجود!' });
+        const { data: { user }, error } = await supabase.auth.getUser(token);
+        if (error || !user) {
+            return res.status(401).json({ success: false, message: 'جلسة العمل انتهت، يرجى تسجيل الدخول مجدداً.' });
         }
-
-        let docRef = null;
-        let data = null;
-        q.forEach(doc => {
-            docRef = doc.ref;
-            data = doc.data();
-        });
-
-        const now = new Date();
-        const expiry = new Date(data.end);
-        if (now > expiry) {
-            return res.status(400).json({ success: false, message: 'عذراً، انتهت صلاحية هذا الكود.', isExpired: true });
-        }
-
-        const usedDevices = data.usedDevices || [];
-        const maxDevices = Number(data.maxDevices) || 1;
-        const isRegistered = usedDevices.includes(deviceId);
-
-        // توليد توكن الجلسة الآمن
-        const token = generateSecureToken({
-            type: 'vip',
-            code: code,
-            client: data.client,
-            games: data.games,
-            deviceId: deviceId,
-            expiry: Math.min(Date.now() + 12 * 60 * 60 * 1000, new Date(data.end).getTime())
-        });
-
-        if (isRegistered) {
-            await docRef.update({ lastLogin: new Date().toISOString() });
-            return res.json({ success: true, client: data.client, games: data.games, token: token });
-        } else {
-            if (usedDevices.length >= maxDevices) {
-                return res.status(400).json({ success: false, message: `تم استخدام الحد الأقصى من الأجهزة (${usedDevices.length} من ${maxDevices}).` });
-            } else {
-                usedDevices.push(deviceId);
-                await docRef.update({
-                    usedDevices: usedDevices,
-                    lastLogin: new Date().toISOString()
-                });
-                return res.json({ success: true, client: data.client, games: data.games, token: token });
-            }
-        }
-    } catch (error) {
-        res.status(500).json({ success: false, message: error.message });
+        req.user = user;
+        next();
+    } catch (err) {
+        return res.status(500).json({ success: false, message: err.message });
     }
 };
 
-app.post('/api/user/validate-game-code', validateGameCodeHandler);
-app.post('/api/user/validate-code', validateGameCodeHandler);
+// دالة جلب صفحة تيك توك العامة باستخدام البروكسي (إن وجد)
+function fetchTikTokProfileHTML(username) {
+    return new Promise((resolve, reject) => {
+        const cleanUsername = username.trim().replace(/^@/, '');
+        const url = `https://www.tiktok.com/@${encodeURIComponent(cleanUsername)}`;
+        const options = {
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+                'Accept-Language': 'en-US,en;q=0.9',
+                'Cache-Control': 'no-cache',
+                'Pragma': 'no-cache',
+                'Referer': 'https://www.google.com/'
+            },
+            timeout: 12000
+        };
 
-// 7. واجهة تحقق المستخدمين من كود الموسوعة
-app.post('/api/user/validate-encyclopedia-code', async (req, res) => {
-    const { code, deviceId } = req.body;
-    if (!code || !deviceId) {
-        return res.status(400).json({ success: false, message: 'بيانات ناقصة' });
-    }
-    if (!db) return res.status(500).json({ success: false, message: 'قاعدة البيانات غير مهيأة' });
-
-    try {
-        const docRef = db.collection('encyclopedia_codes').doc(code);
-        const docSnap = await docRef.get();
-        if (!docSnap.exists) {
-            return res.status(404).json({ success: false, message: 'تأكد من الكود.' });
-        }
-
-        const data = docSnap.data();
-        const now = new Date();
-        const expiry = new Date(data.expiryDate);
-        if (now > expiry) {
-            return res.status(400).json({ success: false, message: 'انتهت صلاحية الكود.', isExpired: true });
-        }
-
-        const usedDevices = data.usedDevices || [];
-        if (data.device && !usedDevices.includes(data.device)) {
-            usedDevices.push(data.device);
-        }
-        const maxDevices = Number(data.maxDevices) || 1;
-        const isRegistered = usedDevices.includes(deviceId);
-
-        // توليد توكن الجلسة الآمن
-        const token = generateSecureToken({
-            type: 'encyclopedia',
-            code: code,
-            client: data.client,
-            deviceId: deviceId,
-            expiry: new Date(data.expiryDate).getTime()
-        });
-
-        if (isRegistered) {
-            await docRef.update({ lastLogin: new Date().toISOString() });
-            return res.json({ success: true, client: data.client, expiryDate: data.expiryDate, maxDevices: data.maxDevices, token: token });
-        } else {
-            if (usedDevices.length >= maxDevices) {
-                return res.status(400).json({ success: false, message: `هذا الكود مستخدم بالفعل على ${usedDevices.length} من ${maxDevices} أجهزة مسموحة.` });
-            } else {
-                usedDevices.push(deviceId);
-                await docRef.update({
-                    usedDevices: usedDevices,
-                    lastLogin: new Date().toISOString()
-                });
-                return res.json({ success: true, client: data.client, expiryDate: data.expiryDate, maxDevices: data.maxDevices, token: token });
+        const proxyUrl = process.env.TIKTOK_PROXY_URL;
+        if (proxyUrl) {
+            try {
+                const { HttpsProxyAgent } = require('https-proxy-agent');
+                options.agent = new HttpsProxyAgent(proxyUrl);
+                console.log(`[TikTok Scraper Proxy] Using proxy agent for @${cleanUsername}`);
+            } catch (proxyErr) {
+                console.error(`[TikTok Proxy Error] Failed to init agent:`, proxyErr.message);
             }
         }
-    } catch (error) {
-        res.status(500).json({ success: false, message: error.message });
+
+        https.get(url, options, (res) => {
+            let data = '';
+            res.on('data', chunk => data += chunk);
+            res.on('end', () => {
+                if (res.statusCode === 200) {
+                    resolve(data);
+                } else {
+                    reject(new Error(`TikTok profile request failed with status: ${res.statusCode}`));
+                }
+            });
+        }).on('error', reject);
+    });
+}
+
+// استخراج البيو واسم العرض (Nickname) من كود الصفحة
+function extractTikTokData(html) {
+    let signature = '';
+    let avatarUrl = ''; // سنقوم بتخزين اسم العرض (Nickname) هنا لتجنب مشاكل انتهاء روابط الصور وتوفير اسم العرض للوحة التحكم
+
+    // محاولة استخراج الـ Bio (signature) من كود JSON الداخلي لـ TikTok
+    const signatureMatch = html.match(/"signature"\s*:\s*"([^"]+)"/);
+    if (signatureMatch) {
+        signature = signatureMatch[1]
+            .replace(/\\u([0-9a-fA-F]{4})/g, (match, grp) => String.fromCharCode(parseInt(grp, 16)))
+            .replace(/\\+/g, '');
+    } else {
+        // محاولة بديلة لقراءة محتوى وسم الوصف
+        const descMatch = html.match(/<meta\s+name="description"\s+content="([^"]+)"/i);
+        if (descMatch) {
+            signature = descMatch[1];
+        }
+    }
+
+    // استخراج اسم العرض (Nickname) من تيك توك وتخزينه في حقل avatarUrl
+    const nicknameMatch = html.match(/"nickname"\s*:\s*"([^"]+)"/);
+    if (nicknameMatch) {
+        avatarUrl = nicknameMatch[1]
+            .replace(/\\u([0-9a-fA-F]{4})/g, (match, grp) => String.fromCharCode(parseInt(grp, 16)))
+            .replace(/\\+/g, '');
+    } else {
+        const titleMatch = html.match(/<title>([^(]+)\s*\(@[^)]+\)/i);
+        if (titleMatch) {
+            avatarUrl = titleMatch[1].trim();
+        }
+    }
+
+    // إذا لم يجد السيرة الذاتية بالطرق التقليدية، نقوم بالبحث عن نمط الكود Q-XXXXXX مباشرة في كامل كود الصفحة HTML
+    if (!signature) {
+        const codePatternMatch = html.match(/Q-[0-9]{6}/i);
+        if (codePatternMatch) {
+            signature = codePatternMatch[0];
+            console.log(`[TikTok Scraper] Fallback found code directly in HTML: ${signature}`);
+        }
+    }
+
+    return { signature, avatarUrl };
+}
+
+// 1. جلب كود التحقق وحالة الربط الحالية
+app.get('/api/tiktok/verification-code', requireAuth, async (req, res) => {
+    try {
+        const userId = req.user.id;
+
+        let { data, error } = await supabase
+            .from('tiktok_links')
+            .select('verification_code, is_linked, tiktok_username, tiktok_avatar_url')
+            .eq('id', userId)
+            .maybeSingle();
+
+        if (error) throw error;
+
+        // توليد كود جديد إذا لم يكن موجوداً
+        if (!data) {
+            const randomCode = 'Q-' + Math.floor(100000 + Math.random() * 900000);
+            const { data: inserted, error: insErr } = await supabase
+                .from('tiktok_links')
+                .insert({
+                    id: userId,
+                    verification_code: randomCode,
+                    is_linked: false
+                })
+                .select()
+                .single();
+
+            if (insErr) throw insErr;
+            data = inserted;
+        } else if (!data.verification_code && !data.is_linked) {
+            // توليد كود إذا انتهت الصلاحية ولم يربط بعد
+            const randomCode = 'Q-' + Math.floor(100000 + Math.random() * 900000);
+            const { data: updated, error: updErr } = await supabase
+                .from('tiktok_links')
+                .update({ verification_code: randomCode })
+                .eq('id', userId)
+                .select()
+                .single();
+
+            if (updErr) throw updErr;
+            data = updated;
+        }
+
+        return res.json({
+            success: true,
+            verification_code: data.verification_code,
+            is_linked: data.is_linked,
+            tiktok_username: data.tiktok_username,
+            tiktok_avatar_url: data.tiktok_avatar_url
+        });
+    } catch (err) {
+        console.error('[Verification Code API Error]:', err.message);
+        return res.status(500).json({ success: false, message: 'فشل معالجة الطلب في السيرفر.' });
     }
 });
 
-// 8. واجهة تحقق المستخدمين من كود ألعاب تيك توك
-app.post('/api/user/validate-tiktok-code', async (req, res) => {
-    const { code, deviceId, platform } = req.body;
-    if (!code || !deviceId) {
-        return res.status(400).json({ success: false, message: 'بيانات ناقصة' });
-    }
-    if (code === '6565799') {
-        const token = generateSecureToken({
-            type: 'tiktok',
-            code: code,
-            client: 'Maintenance Mode',
-            deviceId: deviceId,
-            platform: platform || 'tiktok',
-            expiry: Date.now() + 30 * 24 * 60 * 60 * 1000
-        });
+// 2. التحقق من الـ Bio وتفعيل الربط
+app.post('/api/tiktok/verify', requireAuth, async (req, res) => {
+    try {
+        const userId = req.user.id;
+        const { tiktok_username } = req.body;
+
+        if (!tiktok_username || tiktok_username.trim() === '') {
+            return res.status(400).json({ success: false, message: 'يرجى إدخال اسم مستخدم تيك توك.' });
+        }
+
+        const cleanUsername = tiktok_username.trim().replace(/^@/, '');
+
+        // التحقق من عدم ربط حساب تيك توك هذا بحساب آخر بالفعل لمنع التكرار
+        const { data: duplicateCheck, error: dupErr } = await supabase
+            .from('tiktok_links')
+            .select('id')
+            .eq('tiktok_username', cleanUsername)
+            .eq('is_linked', true);
+
+        if (dupErr) throw dupErr;
+        if (duplicateCheck && duplicateCheck.length > 0) {
+            return res.status(400).json({
+                success: false,
+                message: 'حساب تيك توك هذا مرتبط بحساب لاعب آخر في منصة كيو بالفعل، يرجى استخدام حساب تيك توك مختلف أو التواصل مع الدعم الفني.'
+            });
+        }
+
+        // جلب كود التحقق من قاعدة البيانات
+        const { data, error } = await supabase
+            .from('tiktok_links')
+            .select('verification_code, is_linked')
+            .eq('id', userId)
+            .maybeSingle();
+
+        if (error) throw error;
+        if (!data || !data.verification_code) {
+            return res.status(400).json({ success: false, message: 'كود التحقق غير صالح أو انتهت صلاحيته. يرجى إعادة المحاولة.' });
+        }
+
+        if (data.is_linked) {
+            return res.status(400).json({ success: false, message: 'حسابك مربوط بالفعل بحساب تيك توك.' });
+        }
+
+        const verificationCode = data.verification_code;
+
+        // جلب صفحة تيك توك وقراءتها
+        let html;
+        try {
+            html = await fetchTikTokProfileHTML(cleanUsername);
+        } catch (scrapeErr) {
+            console.error('[Scraper Error]:', scrapeErr.message);
+            return res.status(502).json({
+                success: false,
+                message: 'لم نتمكن من الوصول لصفحة بروفايل تيك توك. يرجى التأكد من اسم الحساب أو المحاولة لاحقاً.'
+            });
+        }
+
+        const { signature, avatarUrl } = extractTikTokData(html);
+
+        // التحقق من أننا استطعنا قراءة الصفحة الحقيقية وليس صفحة التحقق (Captcha) الخاصة بتيك توك
+        if (!signature && !avatarUrl) {
+            return res.status(502).json({
+                success: false,
+                message: 'نواجه مشكلة مؤقتة في الاتصال بخوادم تيك توك. يرجى إعادة المحاولة بعد قليل، وفي حال استمرار المشكلة يرجى التواصل مع الإدارة.'
+            });
+        }
+
+        // التحقق من وجود الكود في السيرة الذاتية (Bio)
+        const isMatch = signature.toLowerCase().includes(verificationCode.toLowerCase()) ||
+            html.toLowerCase().includes(verificationCode.toLowerCase());
+
+        if (!isMatch) {
+            return res.status(400).json({
+                success: false,
+                message: `لم نجد كود التحقق (${verificationCode}) في السيرة الذاتية للحساب. يرجى التأكد من كتابة الكود بمفرده تماماً في الـ Bio والمحاولة مجدداً.`
+            });
+        }
+
+        // نجاح عملية التحقق: ربط الحساب وتصفير الكود
+        const { error: updateErr } = await supabase
+            .from('tiktok_links')
+            .update({
+                tiktok_username: cleanUsername,
+                tiktok_avatar_url: avatarUrl || null,
+                is_linked: true,
+                verification_code: null
+            })
+            .eq('id', userId);
+
+        if (updateErr) throw updateErr;
+
         return res.json({
             success: true,
-            client: 'Maintenance Mode',
-            expiryDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
-            maxDevices: 5,
-            token: token
+            message: 'تم ربط حساب تيك توك بنجاح!',
+            tiktok_username: cleanUsername,
+            tiktok_avatar_url: avatarUrl
         });
+    } catch (err) {
+        console.error('[Verification API Error]:', err.message);
+        return res.status(500).json({ success: false, message: 'حدث خطأ غير متوقع أثناء عملية التحقق.' });
     }
-    if (!db) return res.status(500).json({ success: false, message: 'قاعدة البيانات غير مهيأة' });
+});
 
+// 3. إلغاء الربط وإعادة تهيئة كود جديد (معطل حالياً لأسباب أمنية)
+app.post('/api/tiktok/disconnect', requireAuth, async (req, res) => {
+    return res.status(403).json({ success: false, message: 'إلغاء ربط الحسابات معطل حالياً لأسباب أمنية.' });
+});
+
+// 4. تجهيز لافتة التوثيق وحفظها في قاعدة البيانات
+app.post('/api/tiktok/equip-banner', requireAuth, async (req, res) => {
     try {
-        const docRef = db.collection('tiktok_codes').doc(code);
-        const docSnap = await docRef.get();
-        if (!docSnap.exists) {
-            return res.status(404).json({ success: false, message: 'تأكد من الكود.' });
+        const userId = req.user.id;
+        const { banner_id } = req.body;
+
+        const { error: updateErr } = await supabase
+            .from('tiktok_links')
+            .update({ equipped_banner: banner_id || null })
+            .eq('id', userId);
+
+        if (updateErr) throw updateErr;
+
+        return res.json({ success: true, message: 'تم حفظ تجهيز اللافتة بنجاح.' });
+    } catch (err) {
+        console.error('[Equip Banner API Error]:', err.message);
+        return res.status(500).json({ success: false, message: 'فشل معالجة الطلب في السيرفر.' });
+    }
+});
+
+// 5. جلب اللافتة المجهزة لمستخدم تيك توك معين بالـ username (للاستخدام في الألعاب)
+app.get('/api/tiktok/player-banner', async (req, res) => {
+    try {
+        let username = req.query.username;
+        if (!username) {
+            return res.status(400).json({ success: false, message: 'اسم المستخدم مطلوب.' });
         }
 
-        const data = docSnap.data();
-        const now = new Date();
-        const expiry = new Date(data.expiryDate);
-        if (now > expiry) {
-            return res.status(400).json({ success: false, message: 'انتهت صلاحية الكود.', isExpired: true });
+        username = username.trim().toLowerCase().replace(/^@/, '');
+
+        const { data, error } = await supabase
+            .from('tiktok_links')
+            .select('equipped_banner, is_linked')
+            .eq('tiktok_username', username)
+            .eq('is_linked', true)
+            .maybeSingle();
+
+        if (error) throw error;
+
+        if (!data) {
+            return res.json({ success: true, banner_id: null });
         }
 
-        if (data.platforms && data.platforms.length > 0) {
-            const requestedPlatform = platform || 'tiktok';
-            if (!data.platforms.includes('all') && !data.platforms.includes(requestedPlatform)) {
-                const platformNames = { tiktok: 'تيك توك', twitch: 'تويتش', kick: 'كيك' };
-                const pName = platformNames[requestedPlatform] || requestedPlatform;
-                return res.status(400).json({ success: false, message: `عذراً، هذا الكود غير مفعل لمنصة ${pName}.` });
+        return res.json({ success: true, banner_id: data.equipped_banner || null });
+    } catch (err) {
+        console.error('[Get Player Banner API Error]:', err.message);
+        return res.status(500).json({ success: false, message: 'فشل جلب بيانات اللافتة.' });
+    }
+});
+
+// مسار تسجيل الأجهزة والتحقق من الاشتراكات بشكل آمن من طرف السيرفر (لتجاوز مشاكل RLS)
+app.post('/api/register-device', requireAuth, async (req, res) => {
+    try {
+        const { playerId, deviceId, sessionType } = req.body;
+        
+        if (!playerId || !deviceId || !sessionType) {
+            return res.status(400).json({ success: false, message: 'بيانات غير مكتملة.' });
+        }
+
+        if (!supabase) {
+            return res.status(500).json({ success: false, message: 'قاعدة البيانات غير متصلة.' });
+        }
+
+        // استخراج التوكن الخاص بالمستخدم من الترويسة لإنشاء عميل Supabase خاص به
+        // هذا يسمح لنا بالقيام بالعمليات البرمجية باسم المستخدم المصادق عليه لتجاوز قيود الـ RLS إذا كان مفتاح السيرفر هو ANON
+        const authHeader = req.headers.authorization;
+        const token = authHeader.split(' ')[1];
+        
+        const userClient = createClient(supabaseUrl.trim(), supabaseServiceKey.trim(), {
+            auth: { persistSession: false, autoRefreshToken: false },
+            global: {
+                headers: {
+                    Authorization: `Bearer ${token}`
+                }
             }
-        }
-
-        const usedDevices = data.usedDevices || [];
-        if (data.device && !usedDevices.includes(data.device)) {
-            usedDevices.push(data.device);
-        }
-        const maxDevices = Number(data.maxDevices) || 1;
-        const isRegistered = usedDevices.includes(deviceId);
-
-        // توليد توكن الجلسة الآمن (يتضمن الألعاب المسموح بها)
-        const token = generateSecureToken({
-            type: 'tiktok',
-            code: code,
-            client: data.client,
-            games: data.games || [],
-            deviceId: deviceId,
-            platform: platform || 'tiktok',
-            expiry: new Date(data.expiryDate).getTime()
         });
 
-        if (isRegistered) {
-            await docRef.update({ lastLogin: new Date().toISOString() });
-            return res.json({ success: true, client: data.client, games: data.games || [], expiryDate: data.expiryDate, maxDevices: data.maxDevices, token: token });
-        } else {
-            if (usedDevices.length >= maxDevices) {
-                return res.status(400).json({ success: false, message: `هذا الكود مستخدم بالفعل على ${usedDevices.length} من ${maxDevices} أجهزة مسموحة.` });
-            } else {
-                usedDevices.push(deviceId);
-                await docRef.update({
-                    usedDevices: usedDevices,
-                    lastLogin: new Date().toISOString()
-                });
-                return res.json({ success: true, client: data.client, games: data.games || [], expiryDate: data.expiryDate, maxDevices: data.maxDevices, token: token });
-            }
+        // جلب الاشتراك باستخدام صلاحيات المستخدم المصادق عليه لتجنب قيود الـ RLS
+        const { data: sub, error: subError } = await userClient
+            .from('subscriptions')
+            .select('expiry_date, used_devices, max_devices, games, platforms')
+            .eq('player_id', playerId)
+            .eq('type', sessionType)
+            .maybeSingle();
+
+        if (subError) throw subError;
+        if (!sub) {
+            return res.status(404).json({ success: false, message: 'لا يوجد اشتراك نشط لهذا القسم.' });
         }
-    } catch (error) {
-        res.status(500).json({ success: false, message: error.message });
+
+        const expiryMs = new Date(sub.expiry_date).getTime();
+        if (Date.now() >= expiryMs) {
+            return res.status(403).json({ success: false, message: 'الاشتراك منتهي الصلاحية.' });
+        }
+
+        const hasLocalRegistration = req.body.hasLocalRegistration === true;
+        const usedDevices = Array.isArray(sub.used_devices) ? sub.used_devices : [];
+        const maxDevices = sub.max_devices || 1;
+
+        if (!usedDevices.includes(deviceId)) {
+            // إذا كان المتصفح يدعي أنه كان مسجلاً بالـ LocalStorage ولكن السيرفر لا يجد الجهاز بالـ DB
+            // فهذا يعني حدوث تصفير للأجهزة من الأدمن
+            if (hasLocalRegistration) {
+                return res.status(401).json({
+                    success: false,
+                    code: 'DEVICES_RESET',
+                    message: 'تم تصفير الأجهزة المسجلة من قبل الإدارة، يرجى إعادة تسجيل الدخول.'
+                });
+            }
+
+            if (usedDevices.length >= maxDevices) {
+                return res.status(403).json({ 
+                    success: false, 
+                    code: 'MAX_DEVICES_REACHED',
+                    message: `عفواً، الأجهزة المسجلة ${usedDevices.length}/${maxDevices} ومستنفذة بالكامل. لا يمكن تسجيل جهاز جديد.` 
+                });
+            }
+            usedDevices.push(deviceId);
+        }
+
+        const { error: updateErr } = await userClient
+            .from('subscriptions')
+            .update({ used_devices: usedDevices, last_login: new Date().toISOString() })
+            .eq('player_id', playerId)
+            .eq('type', sessionType);
+
+        if (updateErr) throw updateErr;
+
+        return res.json({
+            success: true,
+            subscription: {
+                expiry_date: sub.expiry_date,
+                used_devices: usedDevices,
+                max_devices: maxDevices,
+                games: sub.games || [],
+                platforms: sub.platforms || []
+            }
+        });
+
+    } catch (err) {
+        console.error('[Register Device API Error]:', err.message);
+        return res.status(500).json({ success: false, message: 'حدث خطأ في السيرفر أثناء تسجيل الجهاز.' });
     }
 });
 
@@ -761,8 +849,27 @@ function connectKickChat(username, onChat, onConnected, onDisconnected, onError)
     };
 }
 
+// جلب وتجهيز لافتة اللاعب المجهزة من قاعدة البيانات
+async function attachEquippedBanner(data) {
+    if (!data || !data.uniqueId) return data;
+    try {
+        const username = data.uniqueId.toLowerCase().trim();
+        const { data: linkData } = await supabase
+            .from('tiktok_links')
+            .select('equipped_banner')
+            .eq('tiktok_username', username)
+            .eq('is_linked', true)
+            .maybeSingle();
+        
+        data.equipped_banner = linkData ? linkData.equipped_banner : null;
+    } catch (e) {
+        data.equipped_banner = null;
+    }
+    return data;
+}
+
 // --- معالج شات البث المركزي للألعاب ---
-function handleStreamChat(roomId, roomName, data) {
+async function handleStreamChat(roomId, roomName, data) {
     const room = roomsData[roomId];
     if (!room) return;
 
@@ -774,6 +881,12 @@ function handleStreamChat(roomId, roomName, data) {
 
     const commentRaw = data.comment.trim();
     const commentNorm = normalizeArabicForServer(commentRaw);
+
+    // إرفاق اللافتة المجهزة بالبيانات مباشرة قبل الإرسال
+    await attachEquippedBanner(data);
+
+    // التحقق مجدداً بعد الاستعلام غير المتزامن لتفادي سباق الحالة (Race Condition)
+    if (!room.chatFilter) return;
 
     if (room.chatFilter.type === 'exact') {
         const targets = (room.chatFilter.targets || []).map(t => normalizeArabicForServer(t));
@@ -865,23 +978,132 @@ const io = new Server(server, {
 });
 
 // Middleware للتحقق من هوية الهوست في اتصال السوكت
-io.use((socket, next) => {
+io.use(async (socket, next) => {
     const token = socket.handshake.auth?.token;
     const isHost = socket.handshake.auth?.isHost;
+    const sessionType = socket.handshake.auth?.type || 'games';
 
     if (token) {
-        const payload = verifySecureToken(token);
-        if (!payload) {
-            console.warn(`[Socket Auth] Rejected - Host socket invalid token signature (Socket ID: ${socket.id})`);
-            if (isHost) return next(new Error('Authentication error: Invalid token signature'));
-        } else if (Date.now() > payload.expiry) {
-            console.warn(`[Socket Auth] Rejected - Host socket token expired (Socket ID: ${socket.id})`);
-            if (isHost) return next(new Error('Authentication error: Token expired'));
-        } else {
-            // حفظ بيانات الجلسة المصدقة في السوكت
-            socket.decodedToken = payload;
-            console.log(`[Socket Auth] Approved connection with token - Client: ${payload.client}, Type: ${payload.type} (Socket ID: ${socket.id})`);
+        // 1. التحقق كـ Supabase JWT
+        if (supabase) {
+            try {
+                const sType = socket.handshake.auth?.type || 'tiktok';
+                const finalPlayerId = String(socket.handshake.auth?.playerId || socket.handshake.query?.playerId || '').trim();
+
+                console.log(`[Socket Auth] Verifying: player=${finalPlayerId}, type=${sType}`);
+
+                // محاولة الحصول على المستخدم - وإذا فشل نحاول باستخدام decode الـ JWT مباشرة
+                let userId = null;
+                let userVerified = false;
+
+                // المحاولة الأولى: getUser مع الـ token مباشرة
+                try {
+                    const { data: { user }, error: userErr } = await supabase.auth.getUser(token);
+                    if (user && !userErr) {
+                        userId = user.id;
+                        userVerified = true;
+                    }
+                } catch (e) { /* سيتم المحاولة الثانية */ }
+
+                // المحاولة الثانية: decode الـ JWT مباشرة للحصول على sub (user id)
+                if (!userVerified && token) {
+                    try {
+                        const parts = token.split('.');
+                        if (parts.length === 3) {
+                            const payload = JSON.parse(Buffer.from(parts[1], 'base64').toString('utf8'));
+                            // تحقق أن الـ token لم ينتهِ منذ أكثر من 30 دقيقة (نسمح بتأخير قصير)
+                            const tokenExp = payload.exp * 1000;
+                            const gracePeriod = 30 * 60 * 1000; // 30 دقيقة تسامح
+                            if (payload.sub && Date.now() < tokenExp + gracePeriod) {
+                                userId = payload.sub;
+                                userVerified = true;
+                                console.log(`[Socket Auth] Using JWT decode fallback for user: ${userId}`);
+                            }
+                        }
+                    } catch (decodeErr) {
+                        console.warn('[Socket Auth] JWT decode failed:', decodeErr.message);
+                    }
+                }
+
+                if (userVerified && finalPlayerId) {
+                    let sub = null;
+
+                    // استعلام مباشر من جدول الاشتراكات
+                    try {
+                        const { data } = await supabase
+                            .from('subscriptions')
+                            .select('expiry_date, games, platforms')
+                            .eq('player_id', finalPlayerId)
+                            .eq('type', sType)
+                            .maybeSingle();
+                        sub = data;
+                    } catch (e) { /* تجاهل */ }
+
+                    // Fallback بيئة محلية
+                    if (!sub) {
+                        try {
+                            const userClient = createClient(supabaseUrl, 'sb_publishable_3HuO817IxhKCV6LKm37_bg_eXou2q9H', {
+                                auth: { persistSession: false, autoRefreshToken: false }
+                            });
+                            await userClient.auth.setSession({ access_token: token, refresh_token: '' });
+                            const { data } = await userClient
+                                .from('subscriptions')
+                                .select('expiry_date, games, platforms')
+                                .eq('player_id', finalPlayerId)
+                                .eq('type', sType)
+                                .maybeSingle();
+                            sub = data;
+                        } catch (fallbackErr) { /* تجاهل */ }
+                    }
+
+                    if (sub) {
+                        const expiryMs = new Date(sub.expiry_date).getTime();
+                        if (Date.now() < expiryMs) {
+                            const socketDeviceId = socket.handshake.auth?.deviceId;
+                            if (socketDeviceId) {
+                                const connectedSockets = Array.from(io.sockets.sockets.values());
+                                const existingSocket = connectedSockets.find(s =>
+                                    s.id !== socket.id &&
+                                    s.decodedToken &&
+                                    s.decodedToken.playerId === finalPlayerId &&
+                                    s.handshake.auth?.deviceId &&
+                                    s.handshake.auth?.deviceId !== socketDeviceId
+                                );
+                                if (existingSocket) {
+                                    console.warn(`[Socket Auth] Rejected - Duplicate device for player ${finalPlayerId}`);
+                                    return next(new Error('Authentication error: Session active on another device'));
+                                }
+                            }
+
+                            socket.decodedToken = {
+                                type: sType,
+                                client: finalPlayerId,
+                                code: finalPlayerId,
+                                playerId: finalPlayerId,
+                                games: sub.games || [],
+                                platforms: sub.platforms || [],
+                                expiry: expiryMs
+                            };
+                            console.log(`[Socket Auth] ✅ Approved: player=${finalPlayerId} (Socket ID: ${socket.id})`);
+                            return next();
+                        } else {
+                            console.warn(`[Socket Auth] Rejected - Subscription expired for player ${finalPlayerId}`);
+                            if (isHost) return next(new Error('Authentication error: Subscription expired'));
+                        }
+                    } else {
+                        console.warn(`[Socket Auth] Rejected - No subscription of type ${sType} for player ${finalPlayerId}`);
+                        if (isHost) return next(new Error('Authentication error: No active subscription found'));
+                    }
+                } else {
+                    console.warn(`[Socket Auth] Rejected - Could not verify user identity (token expired too long ago?)`);
+                }
+            } catch (supErr) {
+                console.error(`[Socket Auth] Error during verification:`, supErr);
+            }
         }
+        
+        console.warn(`[Socket Auth] Rejected - Host socket token verification failed (Socket ID: ${socket.id})`);
+        if (isHost) return next(new Error('Authentication error: Invalid or expired token'));
     } else if (isHost) {
         console.warn(`[Socket Auth] Rejected - Host socket missing token (Socket ID: ${socket.id})`);
         return next(new Error('Authentication error: Missing token for Host connection'));
@@ -2137,10 +2359,11 @@ io.on('connection', (socket) => {
         } else {
             return 'غير معروف';
         }
-        
+
         // 1. ألعاب تيك توك التفاعلية
         if (lower.includes('marathon')) return 'tiktok_marathon';
         if (lower.includes('russian-roulette')) return 'tiktok_russian_roulette';
+        if (lower.includes('hidden-roulette')) return 'tiktok_hidden_roulette';
         if (lower.includes('tiktok-roulette') || lower.includes('roulette')) return 'tiktok_roulette';
         if (lower.includes('bomb')) return 'tiktok_bomb';
         if (lower.includes('missiles') || lower.includes('rockets')) return 'tiktok_rockets';
@@ -2154,6 +2377,8 @@ io.on('connection', (socket) => {
         if (lower.includes('sard')) return 'sard';
         if (lower.includes('shabbik')) return 'shabbik';
         if (lower.includes('musical-chairs') || lower.includes('chairs')) return 'tiktok-musical-chairs';
+        if (lower.includes('birwaz')) return 'tiktok_birwaz';
+        if (lower.includes('derby')) return 'tiktok_derby';
 
         // 2. ألعاب كيو بلس (VIP Games) - تنظيف اللواحق والبادئات
         const cleanUrl = lower.split('?')[0]; // إزالة الـ query parameters
@@ -2163,7 +2388,7 @@ io.on('connection', (socket) => {
             // إزالة الكلمات الملحقة بنوع الصفحة لمعرفة اسم اللعبة الحقيقي
             name = name.replace(/-(host|control|setup|player|view|v2)$/g, '');
             name = name.replace(/_game$/g, '');
-            
+
             if (name === 'explain-words') return 'explain_words';
             if (name === 'color-war') return 'color_war';
             if (name === 'countries-war') return 'countries_war';
@@ -2178,13 +2403,14 @@ io.on('connection', (socket) => {
     function getGameTypeFromId(gameId) {
         if (!gameId) return 'غير معروف';
         let id = gameId.toLowerCase();
-        
+
         // تنظيف المعرفات
         id = id.replace(/-(host|control|setup|player|view|v2)$/g, '');
         id = id.replace(/_game$/g, '');
-        
+
         if (id === 'marathon' || id === 'tiktok_marathon') return 'tiktok_marathon';
         if (id === 'tiktok-russian-roulette' || id === 'tiktok_russian_roulette') return 'tiktok_russian_roulette';
+        if (id === 'tiktok-hidden-roulette' || id === 'tiktok_hidden_roulette' || id === 'hidden-roulette') return 'tiktok_hidden_roulette';
         if (id === 'tiktok-roulette' || id === 'tiktok_roulette') return 'tiktok_roulette';
         if (id === 'tiktok-bomb' || id === 'tiktok_bomb') return 'tiktok_bomb';
         if (id === 'rockets' || id === 'tiktok_rockets' || id === 'tiktok-missiles' || id === 'tiktok-rockets') return 'tiktok_rockets';
@@ -2198,6 +2424,8 @@ io.on('connection', (socket) => {
         if (id === 'sard' || id === 'tiktok-sard') return 'sard';
         if (id === 'shabbik') return 'shabbik';
         if (id === 'musical-chairs' || id === 'tiktok-musical-chairs') return 'tiktok-musical-chairs';
+        if (id === 'birwaz' || id === 'tiktok-birwaz' || id === 'tiktok_birwaz') return 'tiktok_birwaz';
+        if (id === 'derby' || id === 'tiktok-derby' || id === 'tiktok_derby') return 'tiktok_derby';
         return id;
     }
 
@@ -2210,8 +2438,9 @@ io.on('connection', (socket) => {
             return;
         }
 
-        const username = data.username ? data.username.trim().toLowerCase() : null;
+        let username = data.username ? data.username.trim().toLowerCase() : null;
         if (!username) return;
+        if (username.startsWith('@')) username = username.substring(1);
 
         // تحديد اللعبة المستهدفة عند الربط
         const targetGameType = getGameTypeFromId(data.gameId || getGameTypeFromReferer(socket.handshake.headers.referer, socket));
@@ -2267,7 +2496,7 @@ io.on('connection', (socket) => {
 
         // كول داون 15 ثانية بين محاولات الربط لنفس الحساب (تيك توك فقط لمنع البلوك)
         const now = Date.now();
-        const platform = socket.decodedToken.platform || 'tiktok';
+        const platform = data.platform || socket.decodedToken.platform || 'tiktok';
 
         if (platform === 'tiktok') {
             const lastConnect = connectionCooldowns[username];
@@ -2407,6 +2636,10 @@ io.on('connection', (socket) => {
             }
 
             const startTikTokConnection = (attempt = 1, isReconnect = false) => {
+                if (!socket.connected) {
+                    console.log(`[TikTok Connect Bypass] Socket disconnected, skipping retry/attempt for @${username}`);
+                    return;
+                }
                 const maxAttempts = isReconnect ? 5 : 4;
                 if (isReconnect || attempt > 1) {
                     console.log(`[TikTok Connect/Reconnect] Attempt ${attempt}/${maxAttempts} for @${username} (Socket: ${socket.id})`);
@@ -2433,7 +2666,7 @@ io.on('connection', (socket) => {
                             for (let i = 0; i < cleanUser.length; i++) {
                                 hash = cleanUser.charCodeAt(i) + ((hash << 5) - hash);
                             }
-                            
+
                             // إضافة (attempt - 1) تجعل المحاولة الأولى تستخدم المنفذ الافتراضي الثابت دائماً لضمان الاستقرار
                             // والمحاولات التالية تدور على منافذ أخرى للحصول على آي بي جديد
                             const offset = (Math.abs(hash) + (attempt - 1)) % range;
@@ -2531,7 +2764,7 @@ io.on('connection', (socket) => {
                         handleStreamChat(currentRoomId, roomName, data);
                     });
 
-                    tiktokLiveConnection.on('gift', data => {
+                    tiktokLiveConnection.on('gift', async data => {
                         data = flattenTikTokData(data, tiktokLiveConnection.availableGifts);
                         const currentRoomId = Object.keys(roomsData).find(rId => roomsData[rId] && roomsData[rId].tiktokConn === tiktokLiveConnection);
                         if (!currentRoomId) return;
@@ -2540,6 +2773,7 @@ io.on('connection', (socket) => {
                             handleMarathonGift(currentRoomId, data);
                             return;
                         }
+                        await attachEquippedBanner(data);
                         io.to(roomName).emit('tiktok_gift', data);
                     });
 
@@ -2690,9 +2924,9 @@ io.on('connection', (socket) => {
         const isFreeGame = ['countries_war', 'fruit_war', 'flip_turn', 'memory', 'lucky_wheel'].includes(resolvedGameType);
 
         if (!isFreeGame) {
-            if (!socket.decodedToken || (socket.decodedToken.type !== 'vip' && socket.decodedToken.type !== 'tiktok')) {
+            if (!socket.decodedToken || (socket.decodedToken.type !== 'vip' && socket.decodedToken.type !== 'tiktok' && socket.decodedToken.type !== 'games')) {
                 console.warn(`[Security Violation] createRoom rejected for socket ${socket.id} - Not authorized`);
-                socket.emit('auth_error', 'غير مصرح لك بإنشاء غرفة. يرجى تسجيل الدخول بكود تفعيل صالح.');
+                socket.emit('auth_error', 'غير مصرح لك بإنشاء غرفة. يرجى تسجيل الدخول بحساب يحتوي على اشتراك صالح.');
                 return;
             }
         }
@@ -2747,6 +2981,11 @@ io.on('connection', (socket) => {
 
             if (isAuthorizedRecreate) {
                 console.log(`[Room Re-created] Updating hostSocketId for room ${roomId} to new socket ${socket.id}`);
+                if (existingRoom.cleanupTimer) {
+                    clearTimeout(existingRoom.cleanupTimer);
+                    existingRoom.cleanupTimer = null;
+                    console.log(`[Room Re-created] Cleared host disconnect grace timer for room ${roomId}`);
+                }
                 existingRoom.hostSocketId = socket.id;
                 existingRoom.hostClient = hostClient;
                 existingRoom.deviceId = currentDeviceId;
@@ -2801,28 +3040,37 @@ io.on('connection', (socket) => {
         }
         delete marathonQueues[socket.id];
 
-        // 3. Find if this socket owns any room (either by socket.id or hostSocketId) and clean it up immediately
+        // 3. Find if this socket owns any room (either by socket.id or hostSocketId)
         for (const roomId in roomsData) {
             const room = roomsData[roomId];
             if (roomId === socket.id || room.hostSocketId === socket.id) {
-                console.log(`[Socket Disconnect] Cleaning up room ${roomId} owned by host socket ${socket.id} immediately.`);
-                if (room.timer) clearTimeout(room.timer);
+                console.log(`[Socket Disconnect] Delaying room ${roomId} cleanup to allow host reconnection...`);
+                // Clear any existing cleanup timer
                 if (room.cleanupTimer) clearTimeout(room.cleanupTimer);
-                if (room.tiktokConn) {
-                    try { room.tiktokConn.disconnect(); } catch (e) { }
-                }
-                if (room.twitchConn) {
-                    try { room.twitchConn.disconnect(); } catch (e) { }
-                }
-                if (room.kickConn) {
-                    try { room.kickConn.disconnect(); } catch (e) { }
-                }
-                if (marathonLoops[roomId]) {
-                    clearInterval(marathonLoops[roomId]);
-                    delete marathonLoops[roomId];
-                }
-                delete marathonQueues[roomId];
-                delete roomsData[roomId];
+
+                // Set a 15-second grace period for the host to reconnect
+                room.cleanupTimer = setTimeout(() => {
+                    if (roomsData[roomId] && roomsData[roomId].hostSocketId === socket.id) {
+                        console.log(`[Socket Disconnect Grace Expired] Cleaning up room ${roomId} now.`);
+                        if (room.timer) clearTimeout(room.timer);
+                        if (room.tiktokConn) {
+                            try { room.tiktokConn.disconnect(); } catch (e) { }
+                        }
+                        if (room.twitchConn) {
+                            try { room.twitchConn.disconnect(); } catch (e) { }
+                        }
+                        if (room.kickConn) {
+                            try { room.kickConn.disconnect(); } catch (e) { }
+                        }
+                        if (marathonLoops[roomId]) {
+                            clearInterval(marathonLoops[roomId]);
+                            delete marathonLoops[roomId];
+                        }
+                        delete marathonQueues[roomId];
+                        delete roomsData[roomId];
+                        setTimeout(broadcastDashboardUpdate, 500);
+                    }
+                }, 15000); // 15 seconds grace period
             }
         }
 
@@ -2863,6 +3111,107 @@ io.on('connection', (socket) => {
             }
             socket.to(data.room).emit(data.event, data.payload);
             if (data.event === 'saveState') broadcastDashboardUpdate();
+        }
+    });
+
+    // استلام تقارير نهاية الجولات التفاعلية لتحديث إحصائيات اللاعبين
+    socket.on('report_game_result', async (data) => {
+        console.log('[Game Result] Received report:', JSON.stringify(data));
+        if (!data || !Array.isArray(data.participants)) {
+            console.log('[Game Result] Invalid data format (missing or invalid participants list).');
+            return;
+        }
+        
+        const room = roomsData[socket.id];
+        if (!room) {
+            console.log(`[Game Result] Room not found for host socket: ${socket.id}. Must be host socket.`);
+            return; // يجب أن يكون مرسل الحدث هو الهوست (الستريمر)
+        }
+        
+        const roomId = room.tiktokConn?.roomId || room.tiktokUser || `manual_${socket.id}`;
+        const durationSeconds = parseFloat(data.durationSeconds) || 0;
+        const durationHours = durationSeconds / 3600;
+        
+        const uniqueParticipants = [...new Set(data.participants.map(p => p.toLowerCase().trim()))];
+        console.log('[Game Result] Unique participants playing:', uniqueParticipants);
+        if (uniqueParticipants.length === 0) {
+            console.log('[Game Result] No participants in list.');
+            return;
+        }
+        
+        try {
+            // جلب اللاعبين المرتبطين فقط
+            console.log('[Game Result] Fetching linked players from tiktok_links...');
+            const { data: links, error: fetchErr } = await supabase
+                .from('tiktok_links')
+                .select('id, tiktok_username')
+                .in('tiktok_username', uniqueParticipants)
+                .eq('is_linked', true);
+                
+            if (fetchErr) {
+                console.error('[Game Result] Supabase query error fetching tiktok_links:', fetchErr);
+                return;
+            }
+            
+            console.log('[Game Result] Matched linked accounts in DB:', JSON.stringify(links));
+            if (!links || links.length === 0) {
+                console.log('[Game Result] No matched linked players in DB. Ignored.');
+                return;
+            }
+            
+            const playerIds = links.map(l => l.id);
+            
+            // 1. تحديث ساعات اللعب
+            if (durationHours > 0) {
+                for (const playerId of playerIds) {
+                    const { data: pRow } = await supabase
+                        .from('players')
+                        .select('hours_played')
+                        .eq('id', playerId)
+                        .maybeSingle();
+                        
+                    const currentHours = parseFloat(pRow?.hours_played || 0);
+                    await supabase
+                        .from('players')
+                        .update({ hours_played: currentHours + durationHours })
+                        .eq('id', playerId);
+                }
+            }
+            
+            // 2. تسجيل المشاركة في البث (روم التيك توك الحالية)
+            const participations = playerIds.map(pId => ({
+                player_id: pId,
+                tiktok_room_id: String(roomId)
+            }));
+            
+            await supabase
+                .from('player_stream_participation')
+                .upsert(participations, { onConflict: 'player_id,tiktok_room_id' });
+                
+            // 3. تحديث إجمالي الفوز للفائز باللقب
+            if (data.winner) {
+                const winnerUsername = data.winner.toLowerCase().trim();
+                const matchedWinnerLink = links.find(l => l.tiktok_username === winnerUsername);
+                if (matchedWinnerLink) {
+                    const { data: pRow } = await supabase
+                        .from('players')
+                        .select('sijal_wins')
+                        .eq('id', matchedWinnerLink.id)
+                        .maybeSingle();
+                        
+                    const currentWins = parseInt(pRow?.sijal_wins || 0);
+                    await supabase
+                        .from('players')
+                        .update({ sijal_wins: currentWins + 1 })
+                        .eq('id', matchedWinnerLink.id);
+                        
+                    console.log(`[إحصائيات] تم تسجيل فوز للاعب ${winnerUsername} (ID: ${matchedWinnerLink.id})`);
+                }
+            }
+            
+            console.log(`[إحصائيات] جولة مكتملة: تم تتبع ${playerIds.length} لاعبين مرتبطين بنجاح. وقت اللعب المضاف: ${durationHours.toFixed(4)} ساعة.`);
+        } catch (err) {
+            console.error('[إحصائيات] خطأ أثناء تحديث تقرير اللعبة:', err);
         }
     });
 
