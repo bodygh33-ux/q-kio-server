@@ -226,6 +226,92 @@ const requireAuth = async (req, res, next) => {
     }
 };
 
+// اعتراض وتتبع حجم البيانات المارة عبر البروكسي وحفظها في قاعدة البيانات
+function createTrackedProxyAgent(proxyUrl, roomId) {
+    const { HttpsProxyAgent } = require('https-proxy-agent');
+    const agent = new HttpsProxyAgent(proxyUrl, { keepAlive: true });
+
+    const originalCreateConnection = agent.createConnection;
+    if (typeof originalCreateConnection === 'function') {
+        agent.createConnection = function(options, callback) {
+            return originalCreateConnection.call(this, options, (err, socketInstance) => {
+                if (!err && socketInstance) {
+                    socketInstance.on('data', (chunk) => {
+                        if (roomsData[roomId]) {
+                            roomsData[roomId].bytesReceived = (roomsData[roomId].bytesReceived || 0) + chunk.length;
+                            roomsData[roomId].unsavedBytes = (roomsData[roomId].unsavedBytes || 0) + chunk.length;
+                        }
+                    });
+                    const originalWrite = socketInstance.write;
+                    socketInstance.write = function(chunk, encoding, cb) {
+                        const len = chunk ? chunk.length : 0;
+                        if (roomsData[roomId]) {
+                            roomsData[roomId].bytesSent = (roomsData[roomId].bytesSent || 0) + len;
+                            roomsData[roomId].unsavedBytes = (roomsData[roomId].unsavedBytes || 0) + len;
+                        }
+                        return originalWrite.apply(this, arguments);
+                    };
+                }
+                if (callback) callback(err, socketInstance);
+            });
+        };
+    }
+    return agent;
+}
+
+async function saveProxyUsage(playerId, bytesUsed) {
+    if (!supabase || !playerId || bytesUsed <= 0) return;
+    const mbUsed = parseFloat((bytesUsed / (1024 * 1024)).toFixed(4));
+    const todayStr = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+    
+    try {
+        const { data, error: fetchErr } = await supabase
+            .from('proxy_daily_usage')
+            .select('usage_mb')
+            .eq('player_id', playerId)
+            .eq('usage_date', todayStr)
+            .maybeSingle();
+
+        if (fetchErr) throw fetchErr;
+
+        const currentMB = data ? parseFloat(data.usage_mb || 0) : 0;
+        const newMB = parseFloat((currentMB + mbUsed).toFixed(4));
+
+        const { error: upsertErr } = await supabase
+            .from('proxy_daily_usage')
+            .upsert({
+                player_id: playerId,
+                usage_date: todayStr,
+                usage_mb: newMB
+            }, { onConflict: 'player_id,usage_date' });
+
+        if (upsertErr) throw upsertErr;
+        console.log(`[Proxy DB Tracker] Synced ${mbUsed.toFixed(4)} MB for player ${playerId} on date ${todayStr}. Total: ${newMB} MB`);
+    } catch (err) {
+        console.error(`[Proxy DB Tracker] Failed to sync proxy usage for ${playerId}:`, err.message);
+    }
+}
+
+async function syncRoomProxyUsage(roomId) {
+    const room = roomsData[roomId];
+    if (room && room.playerId && room.unsavedBytes > 0) {
+        const bytesToSync = room.unsavedBytes;
+        room.unsavedBytes = 0;
+        await saveProxyUsage(room.playerId, bytesToSync);
+    }
+}
+
+// مزامنة البيانات بشكل دوري كل 3 دقائق للرومات المفتوحة حالياً
+setInterval(async () => {
+    for (const roomId in roomsData) {
+        try {
+            await syncRoomProxyUsage(roomId);
+        } catch (e) {
+            console.error(`[Proxy Interval Sync Error]:`, e.message);
+        }
+    }
+}, 3 * 60 * 1000);
+
 // دالة جلب صفحة تيك توك العامة باستخدام البروكسي (إن وجد)
 function fetchTikTokProfileHTML(username) {
     return new Promise((resolve, reject) => {
@@ -1119,17 +1205,32 @@ function broadcastDashboardUpdate() {
         const state = roomsData[id].gameState || {};
         const gType = roomsData[id].gameType || state.gameType || state.type || "غير معروف";
 
+        const rx = roomsData[id].bytesReceived || 0;
+        const tx = roomsData[id].bytesSent || 0;
+        const usageMB = parseFloat(((rx + tx) / (1024 * 1024)).toFixed(3));
+
         activeRooms[id] = {
             playerCount: io.sockets.adapter.rooms.get(id)?.size || 0,
             createdAt: roomsData[id].createdAt,
             gameType: gType,
             isTikTok: roomsData[id].isTikTok || false,
             tiktokUser: roomsData[id].tiktokUser || null,
-            activationCode: roomsData[id].activationCode || null
+            activationCode: roomsData[id].activationCode || null,
+            playerId: roomsData[id].playerId || null,
+            proxyUsageMB: usageMB
         };
     }
     io.to('admin_room').emit('roomsUpdate', activeRooms);
 }
+
+// تحديث لوحة التحكم تلقائياً كل 5 ثوان لتحديث استهلاك البروكسي الحي
+setInterval(() => {
+    try {
+        broadcastDashboardUpdate();
+    } catch (e) {
+        console.error(`[Dashboard periodic broadcast error]:`, e.message);
+    }
+}, 5000);
 
 function resetRoomTimer(roomId) {
     if (roomsData[roomId]) {
@@ -1157,12 +1258,12 @@ app.get('/dashboard', (req, res) => {
             <title>لوحة تحكم Q-Kio اللحظية</title>
             <script src="/socket.io/socket.io.js"></script>
             <style>
-                body { font-family: Arial; padding: 20px; background: #f4f4f9; }
-                table { width: 100%; border-collapse: collapse; margin-top: 20px; background: white; box-shadow: 0 4px 8px rgba(0,0,0,0.1); border-radius: 8px; overflow: hidden;}
-                th, td { padding: 15px; border-bottom: 1px solid #ddd; text-align: center; }
-                th { background-color: #1e2a38; color: white; }
-                tr:hover { background-color: #f1f1f1; }
-                .btn-delete { background: #e74c3c; color: white; border: none; padding: 8px 15px; cursor: pointer; border-radius: 4px; font-weight: bold;}
+                body { font-family: Arial, sans-serif; padding: 20px; background: #f4f4f9; color: #334155; }
+                table { width: 100%; border-collapse: collapse; margin-top: 15px; background: white; box-shadow: 0 4px 8px rgba(0,0,0,0.05); border-radius: 8px; overflow: hidden;}
+                th, td { padding: 15px; border-bottom: 1px solid #e2e8f0; text-align: center; }
+                th { background-color: #1e2a38; color: white; font-weight: bold; }
+                tr:hover { background-color: #f8fafc; }
+                .btn-delete { background: #e74c3c; color: white; border: none; padding: 8px 15px; cursor: pointer; border-radius: 4px; font-weight: bold; transition: 0.2s;}
                 .btn-delete:hover { background: #c0392b; }
                 .btn-refresh { background: #3498db; color: white; border: none; padding: 10px 20px; cursor: pointer; border-radius: 6px; font-weight: bold; font-size: 1rem; transition: 0.3s; }
                 .btn-refresh:hover { background: #2980b9; }
@@ -1170,34 +1271,94 @@ app.get('/dashboard', (req, res) => {
                 .game-badge { background: rgba(0, 198, 255, 0.1); color: #0072ff; padding: 6px 12px; border-radius: 20px; font-weight: bold; border: 1px solid rgba(0, 198, 255, 0.3); display: inline-block; }
                 .tiktok-badge { background: rgba(255, 0, 80, 0.1); color: #EE1D52; border-color: rgba(255, 0, 80, 0.3); }
                 @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.5; } 100% { opacity: 1; } }
+                
+                /* تنسيقات التبويبات */
+                .tabs { display: flex; gap: 10px; margin-bottom: 20px; border-bottom: 2px solid #e2e8f0; padding-bottom: 10px; }
+                .tab-btn { background: #e2e8f0; border: none; padding: 12px 24px; cursor: pointer; border-radius: 6px; font-weight: bold; font-size: 1rem; color: #475569; transition: 0.2s; }
+                .tab-btn.active { background: #1e2a38; color: white; }
+                .tab-content { display: none; }
+                .tab-content.active { display: block; }
+                
+                /* الفلاتر والملخص */
+                .filter-bar { display: flex; gap: 15px; background: white; padding: 15px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); margin-bottom: 20px; align-items: center; flex-wrap: wrap; }
+                .filter-group { display: flex; flex-direction: column; gap: 5px; }
+                .filter-input { padding: 8px 12px; border: 1px solid #cbd5e1; border-radius: 6px; outline: none; font-size: 1rem; }
+                .summary-card { background: #1e2a38; color: white; padding: 12px 20px; border-radius: 8px; font-size: 1.1rem; font-weight: bold; margin-right: auto; }
+                .sortable { cursor: pointer; user-select: none; position: relative; }
+                .sortable::after { content: ' ⇅'; font-size: 0.8rem; color: #94a3b8; }
             </style>
         </head>
         <body>
-            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px; flex-wrap:wrap; gap:10px;">
-                <h2 style="margin:0;">رومات Q-Kio النشطة <span class="live-badge">Live 🔴</span></h2>
-                <button class="btn-refresh" onclick="refreshAllClients()">تحديث وإعادة تشغيل أجهزة اللاعبين 🔄</button>
+            <div class="tabs">
+                <button class="tab-btn active" onclick="switchTab('active-rooms-tab')">الرومات النشطة حالياً 🎮</button>
+                <button class="tab-btn" onclick="switchTab('proxy-history-tab')">سجل استهلاك البروكسي للأعضاء 📊</button>
             </div>
-            <table>
-                <thead>
-                    <tr>
-                        <th>رقم الروم (الكود / يوزر التيك توك)</th>
-                        <th>كود التفعيل</th>
-                        <th>اللعبة</th>
-                        <th>عدد الأجهزة المتصلة</th>
-                        <th>تاريخ الإنشاء</th>
-                        <th>إجراءات</th>
-                    </tr>
-                </thead>
-                <tbody id="roomsTable">
-                    <tr><td colspan="6">جاري التحميل...</td></tr>
-                </tbody>
-            </table>
+
+            <!-- التبويب الأول: الرومات النشطة -->
+            <div id="active-rooms-tab" class="tab-content active">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px; flex-wrap:wrap; gap:10px;">
+                    <h2 style="margin:0;">رومات Q-Kio النشطة <span class="live-badge">Live 🔴</span></h2>
+                    <button class="btn-refresh" onclick="refreshAllClients()">تحديث وإعادة تشغيل أجهزة اللاعبين 🔄</button>
+                </div>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>رقم الروم (يوزر التيك توك)</th>
+                            <th>معرف المشترك (Player ID)</th>
+                            <th>كود التفعيل</th>
+                            <th>اللعبة</th>
+                            <th>الاستهلاك اللحظي</th>
+                            <th>عدد الأجهزة المتصلة</th>
+                            <th>تاريخ الإنشاء</th>
+                            <th>إجراءات</th>
+                        </tr>
+                    </thead>
+                    <tbody id="roomsTable">
+                        <tr><td colspan="8">جاري التحميل...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- التبويب الثاني: سجل استهلاك البروكسي -->
+            <div id="proxy-history-tab" class="tab-content">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;">
+                    <h2 style="margin:0;">سجل استهلاك البروكسي اليومي للأعضاء</h2>
+                </div>
+                
+                <div class="filter-bar">
+                    <div class="filter-group">
+                        <label style="font-weight:bold; color:#475569;">البحث بالـ ID:</label>
+                        <input type="text" id="searchPlayer" class="filter-input" placeholder="اسم أو ID المشترك..." oninput="filterHistory()">
+                    </div>
+                    <div class="filter-group">
+                        <label style="font-weight:bold; color:#475569;">تصفية بالتاريخ:</label>
+                        <input type="date" id="searchDate" class="filter-input" onchange="filterHistory()">
+                    </div>
+                    <button class="btn-refresh" style="background:#64748b; height:42px; margin-top:20px;" onclick="loadHistoryData()">تحديث السجل 🔄</button>
+                    
+                    <div class="summary-card">
+                        إجمالي الاستهلاك المفلتر: <span id="totalConsumption" style="color:#2ecc71;">0.00</span> MB
+                    </div>
+                </div>
+
+                <table>
+                    <thead>
+                        <tr>
+                            <th class="sortable" onclick="sortHistory('player_id')">معرف المشترك (Player ID)</th>
+                            <th class="sortable" onclick="sortHistory('usage_date')">التاريخ</th>
+                            <th class="sortable" onclick="sortHistory('usage_mb')">الاستهلاك (MB)</th>
+                        </tr>
+                    </thead>
+                    <tbody id="historyTable">
+                        <tr><td colspan="3">اضغط تحديث السجل لتحميل البيانات...</td></tr>
+                    </tbody>
+                </table>
+            </div>
 
             <script>
                 const socket = io();
                 
                 const gameNamesMap = {
-                    // ألعاب كيو بلس (Q+ Games)
                     'bathara': 'بعثرة 🧩',
                     'bingo': 'بينجو 🔢',
                     'risk': 'المجازفة 🃏',
@@ -1231,8 +1392,6 @@ app.get('/dashboard', (req, res) => {
                     'countries_war': 'حرب الدول 🗺️',
                     'fruit_war': 'حرب الفواكه 🍓',
                     'flip': 'اقلب واكسب 🔄',
-
-                    // ألعاب تيك توك والبث المباشر (TikTok / Live Games)
                     'tiktok_bomb': 'تيك توك: القنبلة 💣',
                     'tiktok-bomb': 'تيك توك: القنبلة 💣',
                     'tiktok_roulette': 'تيك توك: الروليت والإقصاء 🎡',
@@ -1270,7 +1429,7 @@ app.get('/dashboard', (req, res) => {
                     const roomIds = Object.keys(rooms);
 
                     if (roomIds.length === 0) {
-                        tbody.innerHTML = '<tr><td colspan="6">لا توجد أي رومات مفتوحة حالياً.</td></tr>';
+                        tbody.innerHTML = '<tr><td colspan="8">لا توجد أي رومات مفتوحة حالياً.</td></tr>';
                         return;
                     }
 
@@ -1282,6 +1441,8 @@ app.get('/dashboard', (req, res) => {
                         const gType = room.gameType;
                         const gameDisplayName = gameNamesMap[gType] || gType;
                         const activationCode = room.activationCode || 'بدون كود (مفتوح)';
+                        const usageMB = room.proxyUsageMB || 0;
+                        const playerId = room.playerId || 'غير مسجل';
                         
                         let displayId = id;
                         let badgeClass = 'game-badge';
@@ -1292,8 +1453,10 @@ app.get('/dashboard', (req, res) => {
 
                         html += '<tr>' +
                                 '<td><strong style="font-size:1.1rem;">' + displayId + '</strong></td>' +
+                                '<td><span class="game-badge" style="background:#f8fafc; color:#475569; border-color:#e2e8f0; font-size:0.95rem;">' + playerId + '</span></td>' +
                                 '<td><span style="font-family:monospace; background:#e0e7ff; color:#312e81; padding:4px 8px; border-radius:6px; font-weight:bold;">' + activationCode + '</span></td>' +
                                 '<td><span class="' + badgeClass + '">' + gameDisplayName + '</span></td>' +
+                                '<td><strong style="color:#e67e22; font-size:1.05rem;">' + usageMB.toFixed(2) + ' MB</strong></td>' +
                                 '<td><strong>' + count + '</strong> جهاز</td>' +
                                 '<td>' + time + '</td>' +
                                 '<td>' +
@@ -1317,10 +1480,135 @@ app.get('/dashboard', (req, res) => {
                             .then(txt => alert(txt));
                     }
                 }
+
+                // --- نظام التبويبات وسجل الاستهلاك ---
+                function switchTab(tabId) {
+                    document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+                    document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
+                    
+                    document.getElementById(tabId).classList.add('active');
+                    event.currentTarget.classList.add('active');
+
+                    if (tabId === 'proxy-history-tab') {
+                        loadHistoryData();
+                    }
+                }
+
+                let rawHistoryData = [];
+                let filteredHistoryData = [];
+                let sortConfig = { key: 'usage_date', direction: 'desc' };
+
+                function loadHistoryData() {
+                    const tbody = document.getElementById('historyTable');
+                    tbody.innerHTML = '<tr><td colspan="3">جاري جلب البيانات...</td></tr>';
+                    
+                    fetch('/api/admin/proxy-history?pass=${ADMIN_PASSWORD}')
+                        .then(r => r.json())
+                        .then(data => {
+                            if (Array.isArray(data)) {
+                                rawHistoryData = data;
+                                filterHistory();
+                            } else {
+                                tbody.innerHTML = '<tr><td colspan="3" style="color:red;">فشل جلب البيانات من السيرفر</td></tr>';
+                            }
+                        })
+                        .catch(err => {
+                            tbody.innerHTML = '<tr><td colspan="3" style="color:red;">خطأ في الاتصال: ' + err.message + '</td></tr>';
+                        });
+                }
+
+                function filterHistory() {
+                    const playerQuery = document.getElementById('searchPlayer').value.trim().toLowerCase();
+                    const dateQuery = document.getElementById('searchDate').value;
+
+                    filteredHistoryData = rawHistoryData.filter(item => {
+                        const matchesPlayer = !playerQuery || item.player_id.toLowerCase().includes(playerQuery);
+                        const matchesDate = !dateQuery || item.usage_date.startsWith(dateQuery);
+                        return matchesPlayer && matchesDate;
+                    });
+
+                    applySort();
+                }
+
+                function sortHistory(key) {
+                    if (sortConfig.key === key) {
+                        sortConfig.direction = sortConfig.direction === 'asc' ? 'desc' : 'asc';
+                    } else {
+                        sortConfig.key = key;
+                        sortConfig.direction = 'desc'; 
+                    }
+                    applySort();
+                }
+
+                function applySort() {
+                    const key = sortConfig.key;
+                    const dir = sortConfig.direction === 'asc' ? 1 : -1;
+
+                    filteredHistoryData.sort((a, b) => {
+                        let valA = a[key];
+                        let valB = b[key];
+
+                        if (key === 'usage_mb') {
+                            valA = parseFloat(valA) || 0;
+                            valB = parseFloat(valB) || 0;
+                        } else {
+                            valA = String(valA).toLowerCase();
+                            valB = String(valB).toLowerCase();
+                        }
+
+                        if (valA < valB) return -1 * dir;
+                        if (valA > valB) return 1 * dir;
+                        return 0;
+                    });
+
+                    renderHistoryTable();
+                }
+
+                function renderHistoryTable() {
+                    const tbody = document.getElementById('historyTable');
+                    if (filteredHistoryData.length === 0) {
+                        tbody.innerHTML = '<tr><td colspan="3">لا توجد سجلات مطابقة للفلاتر المحددة.</td></tr>';
+                        document.getElementById('totalConsumption').innerText = '0.00';
+                        return;
+                    }
+
+                    let totalMB = 0;
+                    let html = '';
+                    filteredHistoryData.forEach(item => {
+                        const mb = parseFloat(item.usage_mb) || 0;
+                        totalMB += mb;
+                        const formattedDate = new Date(item.usage_date).toLocaleDateString('ar-EG', { year: 'numeric', month: 'long', day: 'numeric' });
+
+                        html += '<tr>' +
+                                '<td><span class="game-badge" style="background:#f1f5f9; color:#334155; border:1px solid #cbd5e1;">' + item.player_id + '</span></td>' +
+                                '<td>' + formattedDate + '</td>' +
+                                '<td><strong style="color:#e67e22; font-size:1.1rem;">' + mb.toFixed(2) + ' MB</strong></td>' +
+                                '</tr>';
+                    });
+
+                    tbody.innerHTML = html;
+                    document.getElementById('totalConsumption').innerText = totalMB.toFixed(2);
+                }
             </script>
         </body>
         </html>
     `);
+});
+
+app.get('/api/admin/proxy-history', async (req, res) => {
+    if (req.query.pass !== ADMIN_PASSWORD) return res.status(401).send('غير مصرح لك');
+    try {
+        if (!supabase) return res.status(500).json({ error: 'Supabase client is not initialized' });
+        const { data, error } = await supabase
+            .from('proxy_daily_usage')
+            .select('*')
+            .order('usage_date', { ascending: false });
+
+        if (error) throw error;
+        return res.json(data);
+    } catch (err) {
+        return res.status(500).json({ error: err.message });
+    }
 });
 
 app.get('/delete-room', (req, res) => {
@@ -1328,6 +1616,9 @@ app.get('/delete-room', (req, res) => {
     const roomId = req.query.id;
 
     if (roomsData[roomId]) {
+        // مزامنة استهلاك البروكسي لقاعدة البيانات قبل حذف الغرفة
+        syncRoomProxyUsage(roomId).catch(err => console.error(`[delete-room sync err]:`, err.message));
+
         clearTimeout(roomsData[roomId].timer);
         if (roomsData[roomId].tiktokConn) {
             roomsData[roomId].tiktokConn.disconnect();
@@ -2649,6 +2940,31 @@ io.on('connection', (socket) => {
                 // استنساخ خيارات الاتصال لتجنب تعديل الكائن المشترك بين المحاولات
                 const currentOptions = { ...connectionOptions };
 
+                // تهيئة بيانات الروم مبكراً لتتبع حجم البيانات منذ بدء الاتصال
+                if (!roomsData[socket.id]) {
+                    roomsData[socket.id] = {
+                        createdAt: Date.now(),
+                        gameType: targetGameType,
+                        gameState: { gameType: targetGameType },
+                        isTikTok: true,
+                        tiktokUser: username,
+                        timer: null,
+                        chatFilter: null,
+                        hostSocketId: socket.id,
+                        reconnectCount: 0,
+                        activationCode: socket.decodedToken?.code || null,
+                        playerId: socket.decodedToken?.playerId || null,
+                        bytesReceived: 0,
+                        bytesSent: 0,
+                        unsavedBytes: 0
+                    };
+                } else {
+                    roomsData[socket.id].playerId = socket.decodedToken?.playerId || null;
+                    if (roomsData[socket.id].bytesReceived === undefined) roomsData[socket.id].bytesReceived = 0;
+                    if (roomsData[socket.id].bytesSent === undefined) roomsData[socket.id].bytesSent = 0;
+                    if (roomsData[socket.id].unsavedBytes === undefined) roomsData[socket.id].unsavedBytes = 0;
+                }
+
                 // دعم البروكسي لتخطي حظر الـ IP من خوادم Render مع دعم الجلسة المثبتة (Sticky Session)
                 let proxyUrl = process.env.TIKTOK_PROXY_URL;
                 if (proxyUrl) {
@@ -2684,8 +3000,7 @@ io.on('connection', (socket) => {
 
                     console.log(`[Proxy] توجيه اتصال التيك توك عبر البروكسي: ${proxyUrl.replace(/:[^:]*@/, ':****@')}`);
                     try {
-                        const { HttpsProxyAgent } = require('https-proxy-agent');
-                        const agent = new HttpsProxyAgent(proxyUrl, { keepAlive: true });
+                        const agent = createTrackedProxyAgent(proxyUrl, socket.id);
 
                         currentOptions.webClientOptions = {
                             httpsAgent: agent
@@ -2734,6 +3049,7 @@ io.on('connection', (socket) => {
                         roomsData[socket.id].reconnectCount = 0; // تصفير العداد عند نجاح الاتصال والاستقرار
                         roomsData[socket.id].gameType = targetGameType;
                         roomsData[socket.id].activationCode = socket.decodedToken?.code || null;
+                        roomsData[socket.id].playerId = socket.decodedToken?.playerId || null;
                     } else {
                         roomsData[socket.id] = {
                             createdAt: Date.now(),
@@ -2748,7 +3064,11 @@ io.on('connection', (socket) => {
                             nickname: nickname,
                             hostSocketId: socket.id, // تعيين معرف سوكت الهوست لتجنب التحذيرات الأمنية
                             reconnectCount: 0, // تصفير العداد عند نجاح الاتصال والاستقرار
-                            activationCode: socket.decodedToken?.code || null
+                            activationCode: socket.decodedToken?.code || null,
+                            playerId: socket.decodedToken?.playerId || null,
+                            bytesReceived: 0,
+                            bytesSent: 0,
+                            unsavedBytes: 0
                         };
                     }
                     resetRoomTimer(socket.id); // بدء عداد الحذف التلقائي (30 دقيقة)
@@ -3052,6 +3372,8 @@ io.on('connection', (socket) => {
                 room.cleanupTimer = setTimeout(() => {
                     if (roomsData[roomId] && roomsData[roomId].hostSocketId === socket.id) {
                         console.log(`[Socket Disconnect Grace Expired] Cleaning up room ${roomId} now.`);
+                        // مزامنة استهلاك البروكسي قبل إغلاق الغرفة نهائياً
+                        syncRoomProxyUsage(roomId).catch(err => console.error(`[socket disconnect grace sync err]:`, err.message));
                         if (room.timer) clearTimeout(room.timer);
                         if (room.tiktokConn) {
                             try { room.tiktokConn.disconnect(); } catch (e) { }
