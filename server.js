@@ -3162,20 +3162,81 @@ io.on('connection', (socket) => {
             
             const playerIds = links.map(l => l.id);
             
-            // 1. تحديث ساعات اللعب
-            if (durationHours > 0) {
-                for (const playerId of playerIds) {
-                    const { data: pRow } = await supabase
-                        .from('players')
-                        .select('hours_played')
-                        .eq('id', playerId)
-                        .maybeSingle();
-                        
-                    const currentHours = parseFloat(pRow?.hours_played || 0);
+            // 1. تحديث إحصائيات اللاعبين والمهام اليومية مع حساب الـ XP
+            const todayStr = new Date().toISOString().split('T')[0];
+            
+            for (const playerId of playerIds) {
+                const playerLink = links.find(l => l.id === playerId);
+                const isWinner = data.winner && playerLink && data.winner.toLowerCase().trim() === playerLink.tiktok_username.toLowerCase();
+                
+                const { data: pRow } = await supabase
+                    .from('players')
+                    .select('xp, level, hours_played, sijal_wins, daily_hours_played, daily_wins, daily_streams_participated, last_quest_reset')
+                    .eq('id', playerId)
+                    .maybeSingle();
+                
+                if (pRow) {
+                    let currentHours = parseFloat(pRow.hours_played || 0);
+                    let currentWins = parseInt(pRow.sijal_wins || 0);
+                    let dailyHours = parseFloat(pRow.daily_hours_played || 0);
+                    let dailyWins = parseInt(pRow.daily_wins || 0);
+                    let dailyStreams = Array.isArray(pRow.daily_streams_participated) ? pRow.daily_streams_participated : [];
+                    let currentXp = parseInt(pRow.xp || 0);
+                    const lastReset = pRow.last_quest_reset;
+                    
+                    // تصفير المهام اليومية في حال تغير تاريخ اليوم
+                    if (lastReset !== todayStr) {
+                        dailyHours = 0;
+                        dailyWins = 0;
+                        dailyStreams = [];
+                    }
+                    
+                    let earnedXp = 0;
+                    
+                    // المهمة 1: اللعب 5 ساعات في البثوث (الحد الأقصى 150 XP)
+                    if (durationHours > 0 && dailyHours < 5) {
+                        const oldHours = dailyHours;
+                        dailyHours = Math.min(5, dailyHours + durationHours);
+                        const deltaHours = dailyHours - oldHours;
+                        earnedXp += Math.round((deltaHours / 5) * 150);
+                    }
+                    
+                    // المهمة 2: الفوز في 3 ألعاب (50 XP لكل فوز، الحد الأقصى 150 XP)
+                    if (isWinner && dailyWins < 3) {
+                        dailyWins += 1;
+                        earnedXp += 50;
+                    }
+                    
+                    // المهمة 3: المشاركة في 5 بثوث مختلفة (20 XP لكل بث، الحد الأقصى 100 XP)
+                    if (dailyStreams.length < 5 && !dailyStreams.includes(roomId)) {
+                        dailyStreams.push(roomId);
+                        earnedXp += 20;
+                    }
+                    
+                    const newXp = currentXp + earnedXp;
+                    const newLevel = Math.floor(newXp / 1000) + 1;
+                    const newSijalWins = isWinner ? currentWins + 1 : currentWins;
+                    
                     await supabase
                         .from('players')
-                        .update({ hours_played: currentHours + durationHours })
+                        .update({
+                            hours_played: currentHours + durationHours,
+                            sijal_wins: newSijalWins,
+                            daily_hours_played: dailyHours,
+                            daily_wins: dailyWins,
+                            daily_streams_participated: dailyStreams,
+                            last_quest_reset: todayStr,
+                            xp: newXp,
+                            level: newLevel
+                        })
                         .eq('id', playerId);
+                        
+                    if (earnedXp > 0) {
+                        console.log(`[إحصائيات] تم إضافة ${earnedXp} XP للاعب (ID: ${playerId}) مقابل تقدم المهام اليومية.`);
+                    }
+                    if (isWinner) {
+                        console.log(`[إحصائيات] تم تسجيل فوز للاعب (ID: ${playerId})`);
+                    }
                 }
             }
             
@@ -3188,27 +3249,6 @@ io.on('connection', (socket) => {
             await supabase
                 .from('player_stream_participation')
                 .upsert(participations, { onConflict: 'player_id,tiktok_room_id' });
-                
-            // 3. تحديث إجمالي الفوز للفائز باللقب
-            if (data.winner) {
-                const winnerUsername = data.winner.toLowerCase().trim();
-                const matchedWinnerLink = links.find(l => l.tiktok_username.toLowerCase() === winnerUsername);
-                if (matchedWinnerLink) {
-                    const { data: pRow } = await supabase
-                        .from('players')
-                        .select('sijal_wins')
-                        .eq('id', matchedWinnerLink.id)
-                        .maybeSingle();
-                        
-                    const currentWins = parseInt(pRow?.sijal_wins || 0);
-                    await supabase
-                        .from('players')
-                        .update({ sijal_wins: currentWins + 1 })
-                        .eq('id', matchedWinnerLink.id);
-                        
-                    console.log(`[إحصائيات] تم تسجيل فوز للاعب ${winnerUsername} (ID: ${matchedWinnerLink.id})`);
-                }
-            }
             
             console.log(`[إحصائيات] جولة مكتملة: تم تتبع ${playerIds.length} لاعبين مرتبطين بنجاح. وقت اللعب المضاف: ${durationHours.toFixed(4)} ساعة.`);
         } catch (err) {
