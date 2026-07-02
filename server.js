@@ -231,26 +231,48 @@ function createTrackedProxyAgent(proxyUrl, roomId) {
     const { HttpsProxyAgent } = require('https-proxy-agent');
     const agent = new HttpsProxyAgent(proxyUrl, { keepAlive: true });
 
+    // دالة مساعدة لربط مستمعين الأحداث بالسوكت
+    function trackSocket(socketInstance) {
+        if (!socketInstance || socketInstance.__tracked) return;
+        socketInstance.__tracked = true;
+
+        socketInstance.on('data', (chunk) => {
+            if (roomsData[roomId]) {
+                roomsData[roomId].bytesReceived = (roomsData[roomId].bytesReceived || 0) + chunk.length;
+                roomsData[roomId].unsavedBytes = (roomsData[roomId].unsavedBytes || 0) + chunk.length;
+            }
+        });
+
+        const originalWrite = socketInstance.write;
+        if (originalWrite) {
+            socketInstance.write = function(chunk, encoding, cb) {
+                const len = chunk ? chunk.length : 0;
+                if (roomsData[roomId]) {
+                    roomsData[roomId].bytesSent = (roomsData[roomId].bytesSent || 0) + len;
+                    roomsData[roomId].unsavedBytes = (roomsData[roomId].unsavedBytes || 0) + len;
+                }
+                return originalWrite.apply(this, arguments);
+            };
+        }
+    }
+
+    // لـ https-proxy-agent v7 وما فوق
+    const originalConnect = agent.connect;
+    if (typeof originalConnect === 'function') {
+        agent.connect = async function(req, opts) {
+            const socketInstance = await originalConnect.call(this, req, opts);
+            trackSocket(socketInstance);
+            return socketInstance;
+        };
+    }
+
+    // كخيار احتياطي للإصدارات الأقدم
     const originalCreateConnection = agent.createConnection;
     if (typeof originalCreateConnection === 'function') {
         agent.createConnection = function(options, callback) {
             return originalCreateConnection.call(this, options, (err, socketInstance) => {
                 if (!err && socketInstance) {
-                    socketInstance.on('data', (chunk) => {
-                        if (roomsData[roomId]) {
-                            roomsData[roomId].bytesReceived = (roomsData[roomId].bytesReceived || 0) + chunk.length;
-                            roomsData[roomId].unsavedBytes = (roomsData[roomId].unsavedBytes || 0) + chunk.length;
-                        }
-                    });
-                    const originalWrite = socketInstance.write;
-                    socketInstance.write = function(chunk, encoding, cb) {
-                        const len = chunk ? chunk.length : 0;
-                        if (roomsData[roomId]) {
-                            roomsData[roomId].bytesSent = (roomsData[roomId].bytesSent || 0) + len;
-                            roomsData[roomId].unsavedBytes = (roomsData[roomId].unsavedBytes || 0) + len;
-                        }
-                        return originalWrite.apply(this, arguments);
-                    };
+                    trackSocket(socketInstance);
                 }
                 if (callback) callback(err, socketInstance);
             });
