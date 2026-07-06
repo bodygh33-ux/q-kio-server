@@ -123,7 +123,7 @@ function cleanExpiredAvatarCache() {
             fs.stat(filePath, (statErr, stats) => {
                 if (statErr) return;
                 if (now - stats.mtimeMs > expirationTime) {
-                    fs.unlink(filePath, () => {});
+                    fs.unlink(filePath, () => { });
                 }
             });
         });
@@ -245,7 +245,7 @@ function createTrackedProxyAgent(proxyUrl, roomId) {
 
         const originalWrite = socketInstance.write;
         if (originalWrite) {
-            socketInstance.write = function(chunk, encoding, cb) {
+            socketInstance.write = function (chunk, encoding, cb) {
                 const len = chunk ? chunk.length : 0;
                 if (roomsData[roomId]) {
                     roomsData[roomId].bytesSent = (roomsData[roomId].bytesSent || 0) + len;
@@ -259,7 +259,7 @@ function createTrackedProxyAgent(proxyUrl, roomId) {
     // لـ https-proxy-agent v7 وما فوق
     const originalConnect = agent.connect;
     if (typeof originalConnect === 'function') {
-        agent.connect = async function(req, opts) {
+        agent.connect = async function (req, opts) {
             const socketInstance = await originalConnect.call(this, req, opts);
             trackSocket(socketInstance);
             return socketInstance;
@@ -269,7 +269,7 @@ function createTrackedProxyAgent(proxyUrl, roomId) {
     // كخيار احتياطي للإصدارات الأقدم
     const originalCreateConnection = agent.createConnection;
     if (typeof originalCreateConnection === 'function') {
-        agent.createConnection = function(options, callback) {
+        agent.createConnection = function (options, callback) {
             return originalCreateConnection.call(this, options, (err, socketInstance) => {
                 if (!err && socketInstance) {
                     trackSocket(socketInstance);
@@ -285,7 +285,7 @@ async function saveProxyUsage(playerId, bytesUsed) {
     if (!supabase || !playerId || bytesUsed <= 0) return;
     const mbUsed = parseFloat((bytesUsed / (1024 * 1024)).toFixed(4));
     const todayStr = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
-    
+
     try {
         const { data, error: fetchErr } = await supabase
             .from('proxy_daily_usage')
@@ -505,7 +505,7 @@ app.post('/api/tiktok/verify', requireAuth, async (req, res) => {
         const { data: duplicateCheck, error: dupErr } = await supabase
             .from('tiktok_links')
             .select('id')
-            .eq('tiktok_username', cleanUsername)
+            .ilike('tiktok_username', cleanUsername)
             .eq('is_linked', true);
 
         if (dupErr) throw dupErr;
@@ -630,7 +630,7 @@ app.get('/api/tiktok/player-banner', async (req, res) => {
         const { data, error } = await supabase
             .from('tiktok_links')
             .select('equipped_banner, is_linked')
-            .eq('tiktok_username', username)
+            .ilike('tiktok_username', username)
             .eq('is_linked', true)
             .maybeSingle();
 
@@ -651,7 +651,7 @@ app.get('/api/tiktok/player-banner', async (req, res) => {
 app.post('/api/register-device', requireAuth, async (req, res) => {
     try {
         const { playerId, deviceId, sessionType } = req.body;
-        
+
         if (!playerId || !deviceId || !sessionType) {
             return res.status(400).json({ success: false, message: 'بيانات غير مكتملة.' });
         }
@@ -664,7 +664,7 @@ app.post('/api/register-device', requireAuth, async (req, res) => {
         // هذا يسمح لنا بالقيام بالعمليات البرمجية باسم المستخدم المصادق عليه لتجاوز قيود الـ RLS إذا كان مفتاح السيرفر هو ANON
         const authHeader = req.headers.authorization;
         const token = authHeader.split(' ')[1];
-        
+
         const userClient = createClient(supabaseUrl.trim(), supabaseServiceKey.trim(), {
             auth: { persistSession: false, autoRefreshToken: false },
             global: {
@@ -708,10 +708,10 @@ app.post('/api/register-device', requireAuth, async (req, res) => {
             }
 
             if (usedDevices.length >= maxDevices) {
-                return res.status(403).json({ 
-                    success: false, 
+                return res.status(403).json({
+                    success: false,
                     code: 'MAX_DEVICES_REACHED',
-                    message: `عفواً، الأجهزة المسجلة ${usedDevices.length}/${maxDevices} ومستنفذة بالكامل. لا يمكن تسجيل جهاز جديد.` 
+                    message: `عفواً، الأجهزة المسجلة ${usedDevices.length}/${maxDevices} ومستنفذة بالكامل. لا يمكن تسجيل جهاز جديد.`
                 });
             }
             usedDevices.push(deviceId);
@@ -980,10 +980,10 @@ async function attachEquippedBanner(data) {
         const { data: linkData } = await supabase
             .from('tiktok_links')
             .select('equipped_banner')
-            .eq('tiktok_username', username)
+            .ilike('tiktok_username', username)
             .eq('is_linked', true)
             .maybeSingle();
-        
+
         data.equipped_banner = linkData ? linkData.equipped_banner : null;
     } catch (e) {
         data.equipped_banner = null;
@@ -1224,7 +1224,7 @@ io.use(async (socket, next) => {
                 console.error(`[Socket Auth] Error during verification:`, supErr);
             }
         }
-        
+
         console.warn(`[Socket Auth] Rejected - Host socket token verification failed (Socket ID: ${socket.id})`);
         if (isHost) return next(new Error('Authentication error: Invalid or expired token'));
     } else if (isHost) {
@@ -3480,24 +3480,24 @@ io.on('connection', (socket) => {
             console.log('[Game Result] Invalid data format (missing or invalid participants list).');
             return;
         }
-        
+
         const room = roomsData[socket.id];
         if (!room) {
             console.log(`[Game Result] Room not found for host socket: ${socket.id}. Must be host socket.`);
             return; // يجب أن يكون مرسل الحدث هو الهوست (الستريمر)
         }
-        
+
         const roomId = room.tiktokConn?.roomId || room.tiktokUser || `manual_${socket.id}`;
         const durationSeconds = parseFloat(data.durationSeconds) || 0;
         const durationHours = durationSeconds / 3600;
-        
+
         const uniqueParticipants = [...new Set(data.participants.map(p => p.toLowerCase().trim()))];
         console.log('[Game Result] Unique participants playing:', uniqueParticipants);
         if (uniqueParticipants.length === 0) {
             console.log('[Game Result] No participants in list.');
             return;
         }
-        
+
         try {
             // جلب اللاعبين المرتبطين فقط (مطابقة غير حساسة لحالة الأحرف Case-Insensitive)
             console.log('[Game Result] Fetching linked players from tiktok_links...');
@@ -3507,43 +3507,43 @@ io.on('connection', (socket) => {
                 .select('id, tiktok_username')
                 .or(orFilters)
                 .eq('is_linked', true);
-                
+
             if (fetchErr) {
                 console.error('[Game Result] Supabase query error fetching tiktok_links:', fetchErr);
                 return;
             }
-            
+
             console.log('[Game Result] Matched linked accounts in DB:', JSON.stringify(links));
             if (!links || links.length === 0) {
                 console.log('[Game Result] No matched linked players in DB. Ignored.');
                 return;
             }
-            
+
             const playerIds = links.map(l => l.id);
-            
+
             // 1. تحديث إحصائيات اللاعبين والمهام اليومية مع حساب الـ XP
             const todayStr = new Date().toISOString().split('T')[0];
-            
+
             for (const playerId of playerIds) {
                 const playerLink = links.find(l => l.id === playerId);
                 const isWinner = data.winner && playerLink && data.winner.toLowerCase().trim() === playerLink.tiktok_username.toLowerCase();
-                
+
                 const { data: pRow, error: selectErr } = await supabase
                     .from('players')
                     .select('xp, level, hours_played, sijal_wins, daily_hours_played, daily_wins, daily_streams_participated, last_quest_reset')
                     .eq('id', playerId)
                     .maybeSingle();
-                
+
                 if (selectErr) {
                     console.error(`[إحصائيات] خطأ أثناء قراءة بيانات اللاعب ${playerId} من Supabase:`, selectErr);
                     continue;
                 }
-                
+
                 if (!pRow) {
                     console.warn(`[إحصائيات] لم يتم العثور على اللاعب ذو المعرف ${playerId} في جدول players.`);
                     continue;
                 }
-                
+
                 let currentHours = parseFloat(pRow.hours_played || 0);
                 let currentWins = parseInt(pRow.sijal_wins || 0);
                 let dailyHours = parseFloat(pRow.daily_hours_played || 0);
@@ -3551,16 +3551,16 @@ io.on('connection', (socket) => {
                 let dailyStreams = Array.isArray(pRow.daily_streams_participated) ? pRow.daily_streams_participated : [];
                 let currentXp = parseInt(pRow.xp || 0);
                 const lastReset = pRow.last_quest_reset;
-                
+
                 // تصفير المهام اليومية في حال تغير تاريخ اليوم
                 if (lastReset !== todayStr) {
                     dailyHours = 0;
                     dailyWins = 0;
                     dailyStreams = [];
                 }
-                
+
                 let earnedXp = 0;
-                
+
                 // المهمة 1: اللعب 5 ساعات في البثوث (الحد الأقصى 150 XP)
                 if (durationHours > 0 && dailyHours < 5) {
                     const oldHours = dailyHours;
@@ -3568,23 +3568,23 @@ io.on('connection', (socket) => {
                     const deltaHours = dailyHours - oldHours;
                     earnedXp += Math.round((deltaHours / 5) * 150);
                 }
-                
+
                 // المهمة 2: الفوز في 3 ألعاب (50 XP لكل فوز، الحد الأقصى 150 XP)
                 if (isWinner && dailyWins < 3) {
                     dailyWins += 1;
                     earnedXp += 50;
                 }
-                
+
                 // المهمة 3: المشاركة في 5 بثوث مختلفة (20 XP لكل بث، الحد الأقصى 100 XP)
                 if (dailyStreams.length < 5 && !dailyStreams.includes(roomId)) {
                     dailyStreams.push(roomId);
                     earnedXp += 20;
                 }
-                
+
                 const newXp = currentXp + earnedXp;
                 const newLevel = Math.floor(newXp / 1000) + 1;
                 const newSijalWins = isWinner ? currentWins + 1 : currentWins;
-                
+
                 const { error: updateErr } = await supabase
                     .from('players')
                     .update({
@@ -3598,24 +3598,24 @@ io.on('connection', (socket) => {
                         level: newLevel
                     })
                     .eq('id', playerId);
-                    
+
                 if (updateErr) {
                     console.error(`[إحصائيات] فشل تحديث جدول players للاعب ${playerId}:`, updateErr);
                 } else {
                     console.log(`[إحصائيات] تم تحديث بيانات اللاعب ${playerId} بنجاح. XP المضاف: ${earnedXp}`);
                 }
             }
-            
+
             // 2. تسجيل المشاركة في البث (روم التيك توك الحالية)
             const participations = playerIds.map(pId => ({
                 player_id: pId,
                 tiktok_room_id: String(roomId)
             }));
-            
+
             await supabase
                 .from('player_stream_participation')
                 .upsert(participations, { onConflict: 'player_id,tiktok_room_id' });
-            
+
             console.log(`[إحصائيات] جولة مكتملة: تم تتبع ${playerIds.length} لاعبين مرتبطين بنجاح. وقت اللعب المضاف: ${durationHours.toFixed(4)} ساعة.`);
         } catch (err) {
             console.error('[إحصائيات] خطأ أثناء تحديث تقرير اللعبة:', err);
