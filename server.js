@@ -1052,7 +1052,7 @@ async function prefetchRoomCosmetics(roomId, players) {
 
         if (roomsData[roomId]) {
             roomsData[roomId].playerCosmetics = cosmetics;
-            console.log(`[Cosmetics] Prefetched for ${usernames.length} players in room ${roomId}`);
+            // console.log(`[Cosmetics] Prefetched for ${usernames.length} players in room ${roomId}`);
         }
     } catch (e) {
         console.error('[Cosmetics Prefetch Error]:', e.message);
