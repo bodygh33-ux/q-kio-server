@@ -441,7 +441,7 @@ app.get('/api/tiktok/verification-code', requireAuth, async (req, res) => {
 
         let { data, error } = await supabase
             .from('tiktok_links')
-            .select('verification_code, is_linked, tiktok_username, tiktok_avatar_url')
+            .select('verification_code, is_linked, tiktok_username, tiktok_avatar_url, equipped_banner, equipped_elimination_card')
             .eq('id', userId)
             .maybeSingle();
 
@@ -481,7 +481,9 @@ app.get('/api/tiktok/verification-code', requireAuth, async (req, res) => {
             verification_code: data.verification_code,
             is_linked: data.is_linked,
             tiktok_username: data.tiktok_username,
-            tiktok_avatar_url: data.tiktok_avatar_url
+            tiktok_avatar_url: data.tiktok_avatar_url,
+            equipped_banner: data.equipped_banner || null,
+            equipped_elimination_card: data.equipped_elimination_card || null
         });
     } catch (err) {
         console.error('[Verification Code API Error]:', err.message);
@@ -613,6 +615,26 @@ app.post('/api/tiktok/equip-banner', requireAuth, async (req, res) => {
         return res.json({ success: true, message: 'تم حفظ تجهيز اللافتة بنجاح.' });
     } catch (err) {
         console.error('[Equip Banner API Error]:', err.message);
+        return res.status(500).json({ success: false, message: 'فشل معالجة الطلب في السيرفر.' });
+    }
+});
+
+// تجهيز / إلغاء تجهيز كارت الإقصاء
+app.post('/api/tiktok/equip-elimination-card', requireAuth, async (req, res) => {
+    try {
+        const userId = req.user.id;
+        const { card_id } = req.body;
+
+        const { error: updateErr } = await supabase
+            .from('tiktok_links')
+            .update({ equipped_elimination_card: card_id || null })
+            .eq('id', userId);
+
+        if (updateErr) throw updateErr;
+
+        return res.json({ success: true, message: 'تم حفظ تجهيز كارت الإقصاء بنجاح.' });
+    } catch (err) {
+        console.error('[Equip Elimination Card API Error]:', err.message);
         return res.status(500).json({ success: false, message: 'فشل معالجة الطلب في السيرفر.' });
     }
 });
@@ -972,23 +994,69 @@ function connectKickChat(username, onChat, onConnected, onDisconnected, onError)
     };
 }
 
-// جلب وتجهيز لافتة اللاعب المجهزة من قاعدة البيانات
-async function attachEquippedBanner(data) {
+// جلب كل الـ cosmetics (لافتة + كارت إقصاء + أي حاجة جاية) لاعب واحد من DB
+async function attachPlayerCosmetics(data, cachedCosmetics) {
     if (!data || !data.uniqueId) return data;
+    const username = data.uniqueId.toLowerCase().trim();
+
+    // لو في cache جاهز من بداية الراوند — استخدمه فوراً بدون DB query
+    if (cachedCosmetics && cachedCosmetics[username] !== undefined) {
+        const c = cachedCosmetics[username];
+        data.equipped_banner          = c?.equipped_banner          || null;
+        data.equipped_elimination_card = c?.equipped_elimination_card || null;
+        return data;
+    }
+
+    // Fallback: جلب من DB لو مفيش cache
     try {
-        const username = data.uniqueId.toLowerCase().trim();
         const { data: linkData } = await supabase
             .from('tiktok_links')
-            .select('equipped_banner')
+            .select('equipped_banner, equipped_elimination_card')
             .ilike('tiktok_username', username)
             .eq('is_linked', true)
             .maybeSingle();
 
-        data.equipped_banner = linkData ? linkData.equipped_banner : null;
+        data.equipped_banner          = linkData?.equipped_banner          || null;
+        data.equipped_elimination_card = linkData?.equipped_elimination_card || null;
     } catch (e) {
-        data.equipped_banner = null;
+        data.equipped_banner          = null;
+        data.equipped_elimination_card = null;
     }
     return data;
+}
+
+// تحميل مسبق لـ cosmetics كل اللاعبين دفعة واحدة في بداية الراوند
+// النتيجة بتتخزن في room.playerCosmetics = { 'username': { equipped_banner, equipped_elimination_card } }
+async function prefetchRoomCosmetics(roomId, players) {
+    if (!players || players.length === 0) return;
+    try {
+        const usernames = players.map(p => p.toLowerCase().trim());
+        const { data: rows } = await supabase
+            .from('tiktok_links')
+            .select('tiktok_username, equipped_banner, equipped_elimination_card')
+            .in('tiktok_username', usernames)
+            .eq('is_linked', true);
+
+        const cosmetics = {};
+        // نخزن اللي موجودين في DB
+        (rows || []).forEach(row => {
+            cosmetics[row.tiktok_username.toLowerCase()] = {
+                equipped_banner:          row.equipped_banner          || null,
+                equipped_elimination_card: row.equipped_elimination_card || null
+            };
+        });
+        // اللاعبين اللي ما لقيناهمش في DB — نخزن null عشان نعرف إنهم مفيش عندهم حاجة
+        usernames.forEach(u => {
+            if (!cosmetics[u]) cosmetics[u] = { equipped_banner: null, equipped_elimination_card: null };
+        });
+
+        if (roomsData[roomId]) {
+            roomsData[roomId].playerCosmetics = cosmetics;
+            console.log(`[Cosmetics] Prefetched for ${usernames.length} players in room ${roomId}`);
+        }
+    } catch (e) {
+        console.error('[Cosmetics Prefetch Error]:', e.message);
+    }
 }
 
 // --- معالج شات البث المركزي للألعاب ---
@@ -1006,7 +1074,7 @@ async function handleStreamChat(roomId, roomName, data) {
     const commentNorm = normalizeArabicForServer(commentRaw);
 
     // إرفاق اللافتة المجهزة بالبيانات مباشرة قبل الإرسال
-    await attachEquippedBanner(data);
+    await attachPlayerCosmetics(data, room.playerCosmetics);
 
     // التحقق مجدداً بعد الاستعلام غير المتزامن لتفادي سباق الحالة (Race Condition)
     if (!room.chatFilter) return;
@@ -2597,6 +2665,11 @@ io.on('connection', (socket) => {
     socket.on('set_tiktok_filter', (filterOptions) => {
         if (roomsData[socket.id]) {
             roomsData[socket.id].chatFilter = filterOptions;
+
+            // تحميل مسبق لـ cosmetics لو في قائمة لاعبين (active_players filter)
+            if (filterOptions?.type === 'active_players' && Array.isArray(filterOptions.players) && filterOptions.players.length > 0) {
+                prefetchRoomCosmetics(socket.id, filterOptions.players);
+            }
         }
     });
 
@@ -3130,7 +3203,7 @@ io.on('connection', (socket) => {
                             handleMarathonGift(currentRoomId, data);
                             return;
                         }
-                        await attachEquippedBanner(data);
+                        await attachPlayerCosmetics(data, room?.playerCosmetics);
                         io.to(roomName).emit('tiktok_gift', data);
                     });
 
@@ -3278,7 +3351,7 @@ io.on('connection', (socket) => {
         }
 
         // التحقق الأمني: يسمح للألعاب المجانية بالمرور بدون توكن
-        const isFreeGame = ['countries_war', 'fruit_war', 'flip_turn', 'memory', 'lucky_wheel'].includes(resolvedGameType);
+        const isFreeGame = ['countries_war', 'fruit_war', 'flip_turn', 'memory', 'lucky_wheel', 'voting'].includes(resolvedGameType);
 
         if (!isFreeGame) {
             if (!socket.decodedToken || (socket.decodedToken.type !== 'vip' && socket.decodedToken.type !== 'tiktok' && socket.decodedToken.type !== 'games')) {
