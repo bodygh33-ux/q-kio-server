@@ -3795,9 +3795,26 @@ io.on('connection', (socket) => {
         console.log(`[Russian Roulette Init] Room ${socket.id} loaded in ${firingMode} mode. Calculated survival chance: ${calculatedSurvival}%.`);
     });
 
-    socket.on('russian_roulette_spin', () => {
+    socket.on('russian_roulette_spin', (data) => {
         const room = roomsData[socket.id];
-        if (!room || !room.rouletteState) return;
+        if (!room) return;
+
+        if (!room.rouletteState) {
+            const firingMode = (data && data.firingMode) || 'classic';
+            const chambersCount = (data && parseInt(data.chambersCount)) || 6;
+            const bulletsCount = (data && parseInt(data.bulletsCount)) || 1;
+            const calculatedSurvival = Math.round((1 - (bulletsCount / chambersCount)) * 100);
+            room.rouletteState = {
+                firingMode: firingMode,
+                chambersCount: chambersCount,
+                bulletsCount: bulletsCount,
+                survivalChance: calculatedSurvival,
+                cylinder: generateCylinder(chambersCount, bulletsCount),
+                activeChamberIndex: 0,
+                shotsTaken: 0
+            };
+            console.log(`[Russian Roulette Auto-Init on Spin] Room ${socket.id} loaded.`);
+        }
 
         const state = room.rouletteState;
         const total = state.chambersCount;
@@ -3811,7 +3828,24 @@ io.on('connection', (socket) => {
 
     socket.on('russian_roulette_pull_trigger', (data) => {
         const room = roomsData[socket.id];
-        if (!room || !room.rouletteState) return;
+        if (!room) return;
+
+        if (!room.rouletteState) {
+            const firingMode = (data && data.firingMode) || 'classic';
+            const chambersCount = (data && parseInt(data.chambersCount)) || 6;
+            const bulletsCount = (data && parseInt(data.bulletsCount)) || 1;
+            const calculatedSurvival = Math.round((1 - (bulletsCount / chambersCount)) * 100);
+            room.rouletteState = {
+                firingMode: firingMode,
+                chambersCount: chambersCount,
+                bulletsCount: bulletsCount,
+                survivalChance: calculatedSurvival,
+                cylinder: generateCylinder(chambersCount, bulletsCount),
+                activeChamberIndex: 0,
+                shotsTaken: 0
+            };
+            console.log(`[Russian Roulette Auto-Init on Trigger] Room ${socket.id} loaded.`);
+        }
 
         const state = room.rouletteState;
         const victimId = data.victimId;
