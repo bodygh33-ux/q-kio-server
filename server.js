@@ -1002,7 +1002,7 @@ async function attachPlayerCosmetics(data, cachedCosmetics) {
     // لو في cache جاهز من بداية الراوند — استخدمه فوراً بدون DB query
     if (cachedCosmetics && cachedCosmetics[username] !== undefined) {
         const c = cachedCosmetics[username];
-        data.equipped_banner          = c?.equipped_banner          || null;
+        data.equipped_banner = c?.equipped_banner || null;
         data.equipped_elimination_card = c?.equipped_elimination_card || null;
         return data;
     }
@@ -1016,10 +1016,10 @@ async function attachPlayerCosmetics(data, cachedCosmetics) {
             .eq('is_linked', true)
             .maybeSingle();
 
-        data.equipped_banner          = linkData?.equipped_banner          || null;
+        data.equipped_banner = linkData?.equipped_banner || null;
         data.equipped_elimination_card = linkData?.equipped_elimination_card || null;
     } catch (e) {
-        data.equipped_banner          = null;
+        data.equipped_banner = null;
         data.equipped_elimination_card = null;
     }
     return data;
@@ -1041,7 +1041,7 @@ async function prefetchRoomCosmetics(roomId, players) {
         // نخزن اللي موجودين في DB
         (rows || []).forEach(row => {
             cosmetics[row.tiktok_username.toLowerCase()] = {
-                equipped_banner:          row.equipped_banner          || null,
+                equipped_banner: row.equipped_banner || null,
                 equipped_elimination_card: row.equipped_elimination_card || null
             };
         });
@@ -3790,7 +3790,8 @@ io.on('connection', (socket) => {
             survivalChance: calculatedSurvival,
             cylinder: generateCylinder(chambersCount, bulletsCount),
             activeChamberIndex: 0,
-            shotsTaken: 0
+            shotsTaken: 0,
+            playerGuns: {}
         };
         console.log(`[Russian Roulette Init] Room ${socket.id} loaded in ${firingMode} mode. Calculated survival chance: ${calculatedSurvival}%.`);
     });
@@ -3811,7 +3812,8 @@ io.on('connection', (socket) => {
                 survivalChance: calculatedSurvival,
                 cylinder: generateCylinder(chambersCount, bulletsCount),
                 activeChamberIndex: 0,
-                shotsTaken: 0
+                shotsTaken: 0,
+                playerGuns: {}
             };
             console.log(`[Russian Roulette Auto-Init on Spin] Room ${socket.id} loaded.`);
         }
@@ -3842,7 +3844,8 @@ io.on('connection', (socket) => {
                 survivalChance: calculatedSurvival,
                 cylinder: generateCylinder(chambersCount, bulletsCount),
                 activeChamberIndex: 0,
-                shotsTaken: 0
+                shotsTaken: 0,
+                playerGuns: {}
             };
             console.log(`[Russian Roulette Auto-Init on Trigger] Room ${socket.id} loaded.`);
         }
@@ -3851,12 +3854,26 @@ io.on('connection', (socket) => {
         const victimId = data.victimId;
         if (!victimId) return;
 
+        if (!state.playerGuns) {
+            state.playerGuns = {};
+        }
+
+        // Initialize or validate player's gun state
+        if (!state.playerGuns[victimId] || state.playerGuns[victimId].cylinder.length !== state.chambersCount) {
+            state.playerGuns[victimId] = {
+                cylinder: generateCylinder(state.chambersCount, state.bulletsCount),
+                activeChamberIndex: 0,
+                shotsTaken: 0
+            };
+        }
+
+        const pGun = state.playerGuns[victimId];
         let isBullet = false;
-        let shots = state.shotsTaken || 0;
+        let shots = pGun.shotsTaken || 0;
 
         if (state.firingMode === 'classic') {
-            isBullet = state.cylinder[state.activeChamberIndex];
-            state.activeChamberIndex = (state.activeChamberIndex + 1) % state.chambersCount;
+            isBullet = pGun.cylinder[pGun.activeChamberIndex];
+            pGun.activeChamberIndex = (pGun.activeChamberIndex + 1) % state.chambersCount;
         } else {
             // Percentage mode: dynamic probability drop
             // Survival chance decreases by 15% on each consecutive shot
@@ -3866,28 +3883,28 @@ io.on('connection', (socket) => {
         }
 
         // Increment consecutive shots taken
-        state.shotsTaken = shots + 1;
+        pGun.shotsTaken = shots + 1;
 
         // Calculate the survival chance for the NEXT shot if they survive
-        const nextSurvivalChance = Math.max(5, state.survivalChance - (state.shotsTaken * 15));
+        const nextSurvivalChance = Math.max(5, state.survivalChance - (pGun.shotsTaken * 15));
 
         if (isBullet) {
             // Reset state on hit (death)
-            state.shotsTaken = 0;
+            pGun.shotsTaken = 0;
             if (state.firingMode === 'classic') {
-                state.cylinder = generateCylinder(state.chambersCount, state.bulletsCount);
-                state.activeChamberIndex = 0;
+                pGun.cylinder = generateCylinder(state.chambersCount, state.bulletsCount);
+                pGun.activeChamberIndex = 0;
             }
         }
 
         socket.emit('russian_roulette_trigger_result', {
             isBullet: isBullet,
-            activeChamberIndex: state.activeChamberIndex,
-            shotsTaken: state.shotsTaken, // this is the correct non-reset count
+            activeChamberIndex: pGun.activeChamberIndex,
+            shotsTaken: pGun.shotsTaken, // this is the correct non-reset count
             nextSurvivalChance: nextSurvivalChance
         });
 
-        console.log(`[Russian Roulette Trigger] Room ${socket.id} pulled trigger. Victim ${victimId} shots: ${state.shotsTaken}. Hit: ${isBullet}.`);
+        console.log(`[Russian Roulette Trigger] Room ${socket.id} pulled trigger. Victim ${victimId} shots: ${pGun.shotsTaken}. Hit: ${isBullet}.`);
     });
 
 });
