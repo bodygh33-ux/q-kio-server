@@ -3858,12 +3858,13 @@ io.on('connection', (socket) => {
             state.playerGuns = {};
         }
 
-        // Initialize or validate player's gun state
+        // Initialize or validate player's gun state using client parameters if server state is missing
         if (!state.playerGuns[victimId] || state.playerGuns[victimId].cylinder.length !== state.chambersCount) {
+            const clientCylinder = data && data.gunCylinder && data.gunCylinder.length === state.chambersCount ? data.gunCylinder : null;
             state.playerGuns[victimId] = {
-                cylinder: generateCylinder(state.chambersCount, state.bulletsCount),
-                activeChamberIndex: 0,
-                shotsTaken: 0
+                cylinder: clientCylinder || generateCylinder(state.chambersCount, state.bulletsCount),
+                activeChamberIndex: (data && typeof data.activeChamberIndex === 'number') ? data.activeChamberIndex : 0,
+                shotsTaken: (data && typeof data.shotsTaken === 'number') ? data.shotsTaken : 0
             };
         }
 
