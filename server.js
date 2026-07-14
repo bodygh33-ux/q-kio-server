@@ -669,6 +669,48 @@ app.get('/api/tiktok/player-banner', async (req, res) => {
     }
 });
 
+// 6. جلب قائمة كل هدايا التيك توك المتاحة بصورها الرسمية وأسعارها
+let cachedAvailableGifts = [];
+app.get('/api/tiktok/available-gifts', async (req, res) => {
+    if (req.query.nocache === 'true') {
+        cachedAvailableGifts = [];
+    }
+    if (cachedAvailableGifts.length > 0) {
+        return res.json({ success: true, gifts: cachedAvailableGifts });
+    }
+    try {
+        const { TikTokLiveConnection } = require('tiktok-live-connector');
+        // إنشاء اتصال مؤقت لجلب الهدايا
+        const conn = new TikTokLiveConnection('tiktok');
+        const gifts = await conn.fetchAvailableGifts();
+        if (Array.isArray(gifts)) {
+            cachedAvailableGifts = gifts.map(g => {
+                const imgObj = g.icon || g.image || g.giftImage || g.previewImage;
+                let imgUrl = imgObj?.url_list?.[0] || imgObj?.urlList?.[0] || imgObj?.url?.[0] || '';
+                
+                // تحويل رابط الصورة إلى البروكسي لتجنب قيود الـ CORS في المتصفح إذا كانت من نطاق تيك توك
+                if (imgUrl && typeof imgUrl === 'string') {
+                    // نستخدم نفس دالة البروكسي المحلية لتأمين تحميل الصورة بالمتصفح
+                    imgUrl = `/api/proxy-image?url=${encodeURIComponent(imgUrl)}`;
+                }
+                
+                return {
+                    id: String(g.id),
+                    name: g.name || g.giftName || g.describe || '',
+                    coins: g.diamond_count || g.diamondCount || 1,
+                    image: imgUrl
+                };
+            }).filter(g => g.name);
+
+            return res.json({ success: true, gifts: cachedAvailableGifts });
+        }
+        return res.json({ success: false, message: 'No gifts returned' });
+    } catch (e) {
+        console.error('[Get Available Gifts API Error]:', e.message);
+        return res.status(500).json({ success: false, error: e.message });
+    }
+});
+
 // مسار تسجيل الأجهزة والتحقق من الاشتراكات بشكل آمن من طرف السيرفر (لتجاوز مشاكل RLS)
 app.post('/api/register-device', requireAuth, async (req, res) => {
     try {
